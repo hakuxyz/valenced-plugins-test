@@ -94,13 +94,19 @@ export function stripColorCodes(bio: string): string {
 			.map(char => String.fromCodePoint(char.codePointAt(0)! - StartCodepoint))
 			.join('')
 		const remove = new Array<boolean>(chars.length).fill(false)
+		let hasCode = false
 
 		for (const match of ascii.matchAll(DecodeRegex)) {
+			hasCode = true
 			const start = match.index ?? 0
 			for (let i = start; i < start + match[0].length; i++) {
 				remove[i] = true
 			}
 		}
+
+		// encodeColors prepends a space to the hidden code. Remove it again so
+		// repeated color changes do not accumulate spaces in the bio.
+		if (hasCode && result.endsWith(' ')) result = result.slice(0, -1)
 
 		for (let i = 0; i < chars.length; i++) {
 			if (!remove[i]) result += chars[i]
@@ -134,7 +140,7 @@ export function withColorCode(
 	primary: number,
 	accent: number,
 ): string | null {
-	const cleaned = stripColorCodes(bio).replace(/\s+$/, '')
+	const cleaned = stripColorCodes(bio)
 	const code = encodeColors(primary, accent)
 
 	if (cleaned.length + code.length > MaxBioLength) return null
