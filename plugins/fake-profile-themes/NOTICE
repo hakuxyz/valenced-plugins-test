@@ -1,0 +1,12 @@
+This plugin is a port of FakeProfileThemes to Valenced.
+
+Original Vendetta plugin: FakeProfileThemesAndEffects by ryan
+Source: https://github.com/ryan-0324/vendetta-plugins/tree/main/plugins/FakeProfileThemesAndEffects
+License: CC0 1.0 Universal (https://creativecommons.org/publicdomain/zero/1.0/)
+
+The 3y3 color format was introduced by the FakeProfileThemes plugin for Vencord by
+Alyxia Sother and Remty.
+Source: https://github.com/Vendicated/Vencord/tree/main/src/plugins/fakeProfileThemes
+
+This port only implements the legacy `[#rrggbb,#rrggbb]` color format, so bios
+written by Vencord, Vendetta and Revenge FakeProfileThemes users stay compatible.
