@@ -23,6 +23,24 @@ export function hexToNumber(value: string): number | null {
 	return hex ? Number.parseInt(hex.slice(1), 16) : null
 }
 
+/**
+ * Discord's color picker returns a number, but some builds hand back a hex
+ * string or an object with a color property. Accept all of them.
+ */
+export function colorValueToNumber(value: unknown): number | null {
+	if (typeof value === 'number' && Number.isFinite(value)) {
+		return Math.trunc(value) & 0xffffff
+	}
+
+	if (typeof value === 'string') return hexToNumber(value)
+
+	if (typeof value === 'object' && value !== null && 'color' in value) {
+		return colorValueToNumber((value as { color?: unknown }).color)
+	}
+
+	return null
+}
+
 export function encodeColors(primary: number, accent: number): string {
 	const message = `[#${primary.toString(16).padStart(6, '0')},#${accent.toString(16).padStart(6, '0')}]`
 	const encoded = Array.from(message)

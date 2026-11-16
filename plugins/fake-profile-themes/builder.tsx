@@ -9,7 +9,12 @@ import { React, ReactJSXRuntime } from '@valenced/react'
 import { useState } from 'react'
 import { View } from 'react-native'
 import { refreshProfilePreview } from './refresh'
-import { DefaultSettings, encodeColors, hexToNumber } from './shared'
+import {
+	colorValueToNumber,
+	DefaultSettings,
+	encodeColors,
+	hexToNumber,
+} from './shared'
 import { storage } from './state'
 import type { AnyFunction } from '@valenced/utils/types'
 
@@ -24,7 +29,7 @@ type Cleanup = (...unpatches: Array<() => boolean | void>) => void
 
 interface ColorPickerProps {
 	color?: number
-	onSelect?: (color: number) => void
+	onSelect?: (color: unknown) => void
 	suggestedColors?: string[]
 }
 
@@ -37,7 +42,10 @@ function setColorPicker(module: unknown) {
 		showCustomColorPickerActionSheet?: ShowColorPicker
 		default?: ShowColorPicker
 	}
-	const picker = exports?.showCustomColorPickerActionSheet ?? exports?.default
+	const picker =
+		typeof module === 'function'
+			? (module as ShowColorPicker)
+			: (exports?.showCustomColorPickerActionSheet ?? exports?.default)
 
 	if (typeof picker === 'function') showColorPicker = picker
 }
@@ -86,7 +94,10 @@ export default function Builder() {
 		showColorPicker({
 			color: color ?? undefined,
 			onSelect: value => {
-				const hex = `#${value.toString(16).padStart(6, '0')}`
+				const picked = colorValueToNumber(value)
+				if (picked == null) return
+
+				const hex = `#${picked.toString(16).padStart(6, '0')}`
 				if (key === 'primary') setPrimary(hex)
 				else setAccent(hex)
 				storage?.set({ [key]: hex })
