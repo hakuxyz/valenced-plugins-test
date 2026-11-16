@@ -8,6 +8,7 @@ import { before } from '@valenced/patcher'
 import { React, ReactJSXRuntime } from '@valenced/react'
 import { useState } from 'react'
 import { View } from 'react-native'
+import { refreshProfilePreview } from './refresh'
 import { DefaultSettings, encodeColors, hexToNumber } from './shared'
 import { storage } from './state'
 import type { AnyFunction } from '@valenced/utils/types'
@@ -89,6 +90,7 @@ export default function Builder() {
 				if (key === 'primary') setPrimary(hex)
 				else setAccent(hex)
 				storage?.set({ [key]: hex })
+				refreshProfilePreview()
 			},
 		})
 	}

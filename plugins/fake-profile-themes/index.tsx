@@ -23,6 +23,22 @@ interface UserStore {
 	getCurrentUser(): { id: string } | undefined
 }
 
+/**
+ * The patched profile object is mutated in place, so after the first patch
+ * profile.themeColors is no longer a reliable sign that the user has real
+ * Nitro colors. Remember the original value per profile object instead.
+ */
+const originalThemeColors = new WeakMap<object, number[] | null>()
+
+function getOriginalThemeColors(profile: UserProfile): number[] | null {
+	const cached = originalThemeColors.get(profile)
+	if (cached !== undefined) return cached
+
+	const original = profile.themeColors ?? null
+	originalThemeColors.set(profile, original)
+	return original
+}
+
 function colorsFromSettings(
 	settings: Partial<Settings>,
 ): [number, number] | null {
@@ -50,24 +66,29 @@ export default plugin<{ jsonStorage: Settings }>({
 
 						try {
 							const settings = { ...DefaultSettings, ...jsonStorage.cache }
-							if (settings.nitroFirst && profile.themeColors != null) {
-								return profile
-							}
-
 							const userStore = Stores.UserStore as unknown as
 								| UserStore
 								| undefined
 							const currentId = userStore?.getCurrentUser?.()?.id
-							if (
-								currentId &&
+							const isCurrentUser =
+								currentId != null &&
 								(profile.userId === currentId || profile.id === currentId)
-							) {
+
+							// Always show the colors picked in the plugin on your own
+							// profile, even if the cached profile already has theme
+							// colors from an earlier patch.
+							if (isCurrentUser) {
 								const colors = colorsFromSettings(settings)
 								if (colors) {
 									profile.themeColors = colors
 									profile.premiumType = 2
 									return profile
 								}
+							}
+
+							// Only keep real Nitro colors of other profiles.
+							if (settings.nitroFirst && getOriginalThemeColors(profile)) {
+								return profile
 							}
 
 							const colors = decodeColors(profile.bio)

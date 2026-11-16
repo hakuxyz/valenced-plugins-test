@@ -9,7 +9,7 @@
 		"Alyxia Sother <952185386350829688> (https://github.com/lexisother \"GitHub\")",
 		"Remty <335055032204656642>"
 	],
-	"version": "1.1.1",
+	"version": "1.1.2",
 	"icon": "PaintPaletteIcon",
 	"dependencies": {
 		"valenced.api": {

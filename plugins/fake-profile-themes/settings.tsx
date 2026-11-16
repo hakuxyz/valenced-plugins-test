@@ -5,6 +5,7 @@ import { Design } from '@valenced/discord/design'
 import { Clipboard } from '@valenced/externals/react-native-clipboard'
 import { useState } from 'react'
 import { ScrollView, View } from 'react-native'
+import { refreshProfilePreview } from './refresh'
 import {
 	DefaultSettings,
 	encodeColors,
@@ -49,7 +50,10 @@ export default function SettingsComponent({
 		else setAccent(value)
 
 		const normalized = normalizeHex(value)
-		if (normalized) storage.set({ [key]: normalized })
+		if (normalized && normalized !== settings[key]) {
+			storage.set({ [key]: normalized })
+			refreshProfilePreview()
+		}
 	}
 
 	const copy = () => {
