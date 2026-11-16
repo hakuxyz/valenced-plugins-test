@@ -1,4 +1,4 @@
-import { DefaultSettings } from './shared'
+import { DefaultSettings, hasMeaningfulNote } from './shared'
 import type { JsonStorage } from '@valenced/json-storage'
 import type { ServerNote, Settings } from './shared'
 
@@ -19,10 +19,15 @@ export function getNote(guildId: string): ServerNote | undefined {
 export function setNote(guildId: string, note: ServerNote | null) {
 	if (!storage) return
 	const notes = { ...(storage.cache?.notes ?? {}) }
-	if (note && (note.note.trim() || note.color !== 'default')) {
-		notes[guildId] = note
+	if (note && hasMeaningfulNote(note)) {
+		notes[guildId] = { color: note.color, note: note.note.trim() }
 	} else {
 		delete notes[guildId]
 	}
 	storage.set({ notes })
+}
+
+export function setPendingGuildId(guildId: string | null) {
+	if (!storage) return
+	storage.set({ pendingGuildId: guildId })
 }

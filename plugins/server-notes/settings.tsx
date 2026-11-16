@@ -2,16 +2,21 @@ import Page from '@valenced/components/Page'
 import { ToastActionCreators } from '@valenced/discord/actions'
 import { Design } from '@valenced/discord/design'
 import { Stores } from '@valenced/discord/flux'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Pressable, ScrollView, View } from 'react-native'
+import { openColorPicker } from './color-picker'
 import {
+	colorLabel,
+	colorToHex,
+	colorValueToNumber,
 	DefaultSettings,
 	DefaultTagColor,
-	TagColorNames,
-	TagColors,
-	tagColorHex,
+	hexToNumber,
+	normalizeHex,
+	PresetColorNames,
+	PresetColors,
 } from './shared'
-import { setNote } from './state'
+import { setNote, setPendingGuildId } from './state'
 import type { PluginSettingsComponent } from '@valenced/plugins/types'
 import type { ComponentProps } from 'react'
 import type { ServerNote, Settings } from './shared'
@@ -49,22 +54,22 @@ function allGuilds(): Guild[] {
 	)
 }
 
-function ColorDot({ color, size = 14 }: { color: string; size?: number }) {
+function ColorDot({ color, size = 18 }: { color: string; size?: number }) {
 	return (
 		<View
 			style={{
 				width: size,
 				height: size,
 				borderRadius: size / 2,
-				backgroundColor: color,
+				backgroundColor: colorToHex(color),
 				borderWidth: 1,
-				borderColor: 'rgba(255,255,255,0.15)',
+				borderColor: 'rgba(255,255,255,0.2)',
 			}}
 		/>
 	)
 }
 
-function ColorPicker({
+function PresetPicker({
 	value,
 	onChange,
 }: {
@@ -80,8 +85,8 @@ function ColorPicker({
 				marginVertical: 8,
 			}}
 		>
-			{Object.entries(TagColors).map(([key, hex]) => {
-				const selected = key === value
+			{Object.entries(PresetColors).map(([key, hex]) => {
+				const selected = value === key
 				return (
 					<Pressable
 						key={key}
@@ -93,10 +98,8 @@ function ColorPicker({
 							backgroundColor: hex,
 							borderWidth: selected ? 3 : 1,
 							borderColor: selected ? '#ffffff' : 'rgba(255,255,255,0.2)',
-							alignItems: 'center',
-							justifyContent: 'center',
 						}}
-						accessibilityLabel={TagColorNames[key] ?? key}
+						accessibilityLabel={PresetColorNames[key] ?? key}
 					/>
 				)
 			})}
@@ -119,39 +122,106 @@ function EditNote({
 }) {
 	const [note, setNoteText] = useState(initial?.note ?? '')
 	const [color, setColor] = useState(initial?.color ?? DefaultTagColor)
+	const [hexInput, setHexInput] = useState(
+		initial?.color?.startsWith('#') ? initial.color : '',
+	)
 	const name = guildName(guildId)
 
+	const applyHex = (value: string) => {
+		setHexInput(value)
+		const normalized = normalizeHex(value)
+		if (normalized) setColor(normalized)
+	}
+
+	const pickCustom = () => {
+		const currentNum = hexToNumber(
+			color.startsWith('#') ? color : colorToHex(color),
+		)
+		const opened = openColorPicker({
+			color: currentNum ?? undefined,
+			onSelect: value => {
+				const picked = colorValueToNumber(value)
+				if (picked == null) return
+				const hex = `#${picked.toString(16).padStart(6, '0')}`
+				setColor(hex)
+				setHexInput(hex)
+			},
+		})
+		if (!opened) {
+			ToastActionCreators.open('SERVER_NOTES_PICKER', {
+				text: 'Color picker not available. Enter a hex value instead.',
+				variant: 'critical',
+			})
+		}
+	}
+
 	return (
-		<TableRowGroup title={initial ? 'Edit note' : 'Add note'}>
+		<TableRowGroup title={initial ? 'Edit server note' : 'Add server note'}>
 			<View style={{ paddingHorizontal: 16, paddingVertical: 8 }}>
-				<Text variant="text-md/semibold" style={{ marginBottom: 4 }}>
+				<Text variant="text-md/semibold" style={{ marginBottom: 2 }}>
 					{name}
 				</Text>
 				<Text
-					variant="text-sm/normal"
-					style={{ opacity: 0.7, marginBottom: 8 }}
+					variant="text-xs/normal"
+					style={{ opacity: 0.6, marginBottom: 10 }}
 				>
 					{guildId}
 				</Text>
-				<Text variant="text-sm/semibold" style={{ marginBottom: 4 }}>
-					Tag color
-				</Text>
-				<ColorPicker value={color} onChange={setColor} />
-				<Text
-					variant="text-sm/normal"
-					style={{ marginBottom: 6, opacity: 0.8 }}
+
+				<View
+					style={{
+						flexDirection: 'row',
+						alignItems: 'center',
+						gap: 10,
+						marginBottom: 8,
+					}}
 				>
-					{TagColorNames[color] ?? color}
+					<ColorDot color={color} size={24} />
+					<Text variant="text-sm/medium">{colorLabel(color)}</Text>
+				</View>
+
+				<Text variant="text-sm/semibold" style={{ marginBottom: 4 }}>
+					Preset colors
 				</Text>
+				<PresetPicker
+					value={color}
+					onChange={c => {
+						setColor(c)
+						setHexInput('')
+					}}
+				/>
+
+				<View
+					style={{
+						flexDirection: 'row',
+						gap: 8,
+						marginTop: 8,
+						marginBottom: 4,
+					}}
+				>
+					<Button
+						text="Pick custom color"
+						variant="secondary"
+						onPress={pickCustom}
+					/>
+				</View>
 			</View>
+
+			<TextInput
+				label="Custom hex color"
+				placeholder="#5865f2"
+				value={hexInput}
+				onChange={applyHex}
+			/>
 			<TextInput
 				label="Note"
-				placeholder="Why did you join/leave this server?"
+				placeholder="Add a note for this server..."
 				value={note}
 				onChange={setNoteText}
 				multiline
 			/>
-			<View style={{ paddingHorizontal: 16, paddingVertical: 8, gap: 8 }}>
+
+			<View style={{ paddingHorizontal: 16, paddingVertical: 10, gap: 8 }}>
 				<Button
 					text="Save"
 					variant="primary"
@@ -159,7 +229,7 @@ function EditNote({
 						const trimmed = note.trim()
 						if (!trimmed && color === DefaultTagColor) {
 							ToastActionCreators.open('SERVER_NOTES_EMPTY', {
-								text: 'Add a note or pick a color.',
+								text: 'Add a note or choose a color.',
 								variant: 'critical',
 							})
 							return
@@ -168,7 +238,7 @@ function EditNote({
 					}}
 				/>
 				{onDelete ? (
-					<Button text="Delete" variant="destructive" onPress={onDelete} />
+					<Button text="Delete note" variant="destructive" onPress={onDelete} />
 				) : null}
 				<Button text="Cancel" variant="secondary" onPress={onCancel} />
 			</View>
@@ -179,31 +249,28 @@ function EditNote({
 function GuildPicker({
 	onPick,
 	onCancel,
-	existingIds,
 }: {
 	onPick: (id: string) => void
 	onCancel: () => void
-	existingIds: Set<string>
 }) {
 	const [query, setQuery] = useState('')
 	const guilds = allGuilds().filter(g => {
-		if (existingIds.has(g.id)) return false
 		if (!query) return true
 		const q = query.toLowerCase()
 		return (g.name ?? '').toLowerCase().includes(q) || g.id.includes(q)
 	})
 
 	return (
-		<TableRowGroup title="Pick a server">
+		<TableRowGroup title="Choose a server">
 			<TextInput
 				label="Search"
-				placeholder="Search servers..."
+				placeholder="Search by name or ID..."
 				value={query}
 				onChange={setQuery}
 			/>
-			<View style={{ maxHeight: 360 }}>
-				<ScrollView nestedScrollEnabled>
-					{guilds.slice(0, 100).map(g => (
+			<View style={{ maxHeight: 380 }}>
+				<ScrollView nestedScrollEnabled keyboardShouldPersistTaps="handled">
+					{guilds.slice(0, 150).map(g => (
 						<TableRow
 							key={g.id}
 							label={g.name ?? g.id}
@@ -236,6 +303,16 @@ export default function SettingsComponent({
 	const [editingId, setEditingId] = useState<string | null>(null)
 	const [adding, setAdding] = useState(false)
 
+	// If opened from server context menu, jump straight to editor
+	useEffect(() => {
+		const pending = storage.cache?.pendingGuildId
+		if (pending) {
+			setEditingId(pending)
+			setAdding(false)
+			setPendingGuildId(null)
+		}
+	}, [storage])
+
 	const entries = Object.entries(notes).sort((a, b) =>
 		guildName(a[0]).localeCompare(guildName(b[0])),
 	)
@@ -245,7 +322,7 @@ export default function SettingsComponent({
 		setEditingId(null)
 		setAdding(false)
 		ToastActionCreators.open('SERVER_NOTES_SAVED', {
-			text: 'Note saved.',
+			text: 'Server note saved.',
 			variant: 'success',
 		})
 	}
@@ -254,7 +331,7 @@ export default function SettingsComponent({
 		setNote(guildId, null)
 		setEditingId(null)
 		ToastActionCreators.open('SERVER_NOTES_REMOVED', {
-			text: 'Note removed.',
+			text: 'Server note removed.',
 			variant: 'default',
 		})
 	}
@@ -262,10 +339,11 @@ export default function SettingsComponent({
 	return (
 		<ScrollView keyboardShouldPersistTaps="handled">
 			<Page>
-				<Text variant="text-md/normal" style={{ marginBottom: 12 }}>
-					Add notes and color tags to servers so you remember why you joined -
-					or why you left.
-				</Text>
+				{!editingId && !adding ? (
+					<Text variant="text-md/normal" style={{ marginBottom: 12 }}>
+						Add notes and color tags to servers to keep track of them.
+					</Text>
+				) : null}
 
 				{editingId ? (
 					<EditNote
@@ -280,7 +358,6 @@ export default function SettingsComponent({
 					/>
 				) : adding ? (
 					<GuildPicker
-						existingIds={new Set(Object.keys(notes))}
 						onPick={id => {
 							setAdding(false)
 							setEditingId(id)
@@ -289,11 +366,11 @@ export default function SettingsComponent({
 					/>
 				) : (
 					<>
-						<TableRowGroup title="Notes">
+						<TableRowGroup title="Server notes">
 							{entries.length === 0 ? (
 								<View style={{ padding: 16 }}>
 									<Text variant="text-sm/normal" style={{ opacity: 0.7 }}>
-										No notes yet. Tap "Add note" to get started.
+										No notes yet. Add one from here or from a server's menu.
 									</Text>
 								</View>
 							) : (
@@ -303,30 +380,28 @@ export default function SettingsComponent({
 										label={guildName(guildId)}
 										subLabel={
 											note.note
-												? note.note.length > 60
-													? `${note.note.slice(0, 60)}...`
+												? note.note.length > 70
+													? `${note.note.slice(0, 70)}...`
 													: note.note
-												: `Tag: ${TagColorNames[note.color] ?? note.color}`
+												: `Tag: ${colorLabel(note.color)}`
 										}
-										icon={
-											<ColorDot color={tagColorHex(note.color)} size={18} />
-										}
+										icon={<ColorDot color={note.color} size={18} />}
 										onPress={() => setEditingId(guildId)}
 										arrow
 									/>
 								))
 							)}
 						</TableRowGroup>
-						<View style={{ paddingHorizontal: 16, paddingTop: 12 }}>
+						<View style={{ paddingHorizontal: 16, paddingTop: 12, gap: 8 }}>
 							<Button
-								text="Add note"
+								text="Add server note"
 								variant="primary"
 								onPress={() => setAdding(true)}
 							/>
 						</View>
 						<View style={{ paddingHorizontal: 16, paddingTop: 16 }}>
 							<Text variant="text-xs/normal" style={{ opacity: 0.6 }}>
-								Notes are stored locally on this device.
+								Notes and tags are stored locally on this device.
 							</Text>
 						</View>
 					</>
