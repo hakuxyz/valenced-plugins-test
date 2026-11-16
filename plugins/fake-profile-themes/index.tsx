@@ -1,9 +1,11 @@
-import { getStore, Stores } from '@valenced/discord/flux'
+import { getStore } from '@valenced/discord/flux'
 import { after } from '@valenced/patcher'
 import { setupBuilder, setupColorPicker } from './builder'
+import { currentColors, currentUserId } from './colors'
 import SettingsComponent from './settings'
-import { DefaultSettings, decodeColors, hexToNumber } from './shared'
+import { DefaultSettings, decodeColors } from './shared'
 import { setStorage } from './state'
+import { setupThemePreview } from './theme-preview'
 import type { Settings } from './shared'
 
 interface UserProfile {
@@ -17,10 +19,6 @@ interface UserProfile {
 
 interface UserProfileStore {
 	getUserProfile(userId: string): UserProfile | undefined
-}
-
-interface UserStore {
-	getCurrentUser(): { id: string } | undefined
 }
 
 /**
@@ -39,15 +37,6 @@ function getOriginalThemeColors(profile: UserProfile): number[] | null {
 	return original
 }
 
-function colorsFromSettings(
-	settings: Partial<Settings>,
-): [number, number] | null {
-	const primary = hexToNumber(settings.primary ?? DefaultSettings.primary)
-	const accent = hexToNumber(settings.accent ?? DefaultSettings.accent)
-
-	return primary == null || accent == null ? null : [primary, accent]
-}
-
 export default plugin<{ jsonStorage: Settings }>({
 	jsonStorage: {
 		load: true,
@@ -57,6 +46,7 @@ export default plugin<{ jsonStorage: Settings }>({
 		setStorage(jsonStorage)
 		setupColorPicker(cleanup)
 		setupBuilder(cleanup)
+		setupThemePreview(cleanup)
 
 		cleanup(
 			getStore<UserProfileStore>('UserProfileStore', store => {
@@ -66,19 +56,16 @@ export default plugin<{ jsonStorage: Settings }>({
 
 						try {
 							const settings = { ...DefaultSettings, ...jsonStorage.cache }
-							const userStore = Stores.UserStore as unknown as
-								| UserStore
-								| undefined
-							const currentId = userStore?.getCurrentUser?.()?.id
+							const ownId = currentUserId()
 							const isCurrentUser =
-								currentId != null &&
-								(profile.userId === currentId || profile.id === currentId)
+								ownId != null &&
+								(profile.userId === ownId || profile.id === ownId)
 
 							// Always show the colors picked in the plugin on your own
 							// profile, even if the cached profile already has theme
 							// colors from an earlier patch.
 							if (isCurrentUser) {
-								const colors = colorsFromSettings(settings)
+								const colors = currentColors()
 								if (colors) {
 									profile.themeColors = colors
 									profile.premiumType = 2

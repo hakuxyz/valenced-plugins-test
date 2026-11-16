@@ -32,7 +32,7 @@ export function encodeColors(primary: number, accent: number): string {
 	return ` ${encoded}`
 }
 
-const DecodeRegex = /\[#([a-fA-F0-9]{1,6}),#([a-fA-F0-9]{1,6})\]/
+const DecodeRegex = /\[#([a-fA-F0-9]{1,6}),#([a-fA-F0-9]{1,6})\]/g
 
 export function decodeColors(
 	bio: string | null | undefined,
@@ -47,7 +47,11 @@ export function decodeColors(
 		}
 	}
 
-	const match = ascii.match(DecodeRegex)
+	// Bios can contain several hidden codes, for example after updating the
+	// colors without removing the previous one. The newest code is normally
+	// the one closest to the end, so prefer the last match.
+	const matches = [...ascii.matchAll(DecodeRegex)]
+	const match = matches[matches.length - 1]
 	if (!match) return null
 
 	return [Number.parseInt(match[1], 16), Number.parseInt(match[2], 16)]
