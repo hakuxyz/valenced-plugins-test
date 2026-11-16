@@ -32,17 +32,13 @@ type ShowColorPicker = (props: ColorPickerProps) => void
 let showColorPicker: ShowColorPicker | undefined
 
 function setColorPicker(module: unknown) {
-	if (typeof module === 'function') {
-		showColorPicker = module as ShowColorPicker
-		return
-	}
-
 	const exports = module as {
 		showCustomColorPickerActionSheet?: ShowColorPicker
+		default?: ShowColorPicker
 	}
-	if (typeof exports?.showCustomColorPickerActionSheet === 'function') {
-		showColorPicker = exports.showCustomColorPickerActionSheet
-	}
+	const picker = exports?.showCustomColorPickerActionSheet ?? exports?.default
+
+	if (typeof picker === 'function') showColorPicker = picker
 }
 
 export function setupColorPicker(cleanup: Cleanup) {
