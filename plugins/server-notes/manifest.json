@@ -1,0 +1,20 @@
+{
+	"format": 1,
+	"id": "hakuxyz.server-notes",
+	"name": "Server Notes",
+	"description": "Put notes and colored tags on servers so you remember why you joined - or why you left.",
+	"author": "hakuxyz",
+	"version": "1.0.0",
+	"icon": "PencilIcon",
+	"dependencies": {
+		"valenced.api": {
+			"version": ">=1 <2"
+		},
+		"discord": {
+			"version": "*"
+		}
+	},
+	"dist": {
+		"script": "index.js"
+	}
+}
