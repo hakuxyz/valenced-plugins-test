@@ -5,8 +5,10 @@ import { Design } from '@valenced/discord/design'
 import { Clipboard } from '@valenced/externals/react-native-clipboard'
 import { useState } from 'react'
 import { ScrollView, View } from 'react-native'
+import { openColorPicker } from './color-picker'
 import { refreshProfilePreview } from './refresh'
 import {
+	colorValueToNumber,
 	DefaultSettings,
 	encodeColors,
 	hexToNumber,
@@ -56,6 +58,27 @@ export default function SettingsComponent({
 		}
 	}
 
+	const pick = (key: 'primary' | 'accent') => {
+		const current = hexToNumber(key === 'primary' ? primary : accent)
+		const opened = openColorPicker({
+			color: current ?? undefined,
+			onSelect: value => {
+				const picked = colorValueToNumber(value)
+				if (picked == null) return
+
+				const hex = `#${picked.toString(16).padStart(6, '0')}`
+				update(key, hex)
+			},
+		})
+
+		if (!opened) {
+			ToastActionCreators.open('FAKE_PROFILE_THEMES_PICKER', {
+				text: 'Color picker not available. Enter the hex value below instead.',
+				variant: 'critical',
+			})
+		}
+	}
+
 	const copy = () => {
 		if (primaryColor == null || accentColor == null) {
 			ToastActionCreators.open('FAKE_PROFILE_THEMES_INVALID', {
@@ -67,7 +90,7 @@ export default function SettingsComponent({
 
 		Clipboard.setString(encodeColors(primaryColor, accentColor))
 		ToastActionCreators.open('FAKE_PROFILE_THEMES_COPIED', {
-			text: 'Copied. Paste the invisible text into your bio.',
+			text: 'Copied. Paste the invisible text anywhere into your bio.',
 			variant: 'success',
 		})
 	}
@@ -76,20 +99,28 @@ export default function SettingsComponent({
 		<ScrollView keyboardShouldPersistTaps="handled">
 			<Page>
 				<Text variant="text-md/normal" style={{ marginBottom: 12 }}>
-					Pick your colors. The hidden color code is written into your bio
-					automatically when you save your profile, and older color codes are
-					removed. Other people with this plugin will see the colors on your
-					profile.
+					Pick your colors, then copy the hidden 3y3 text and paste it anywhere
+					into your bio. Other people with this plugin will see the colors on
+					your profile.
 				</Text>
-				<TableRowGroup title="Preview">
+				<TableRowGroup title="Colors">
 					<TableRow
-						label="Primary"
-						trailing={<Swatch color={primaryColor} />}
+						icon={<Swatch color={primaryColor} />}
+						label="Primary color"
+						subLabel={primary.toUpperCase()}
+						onPress={() => pick('primary')}
+						arrow
 					/>
-					<TableRow label="Accent" trailing={<Swatch color={accentColor} />} />
+					<TableRow
+						icon={<Swatch color={accentColor} />}
+						label="Accent color"
+						subLabel={accent.toUpperCase()}
+						onPress={() => pick('accent')}
+						arrow
+					/>
 				</TableRowGroup>
 				<TextInput
-					label="Primary color"
+					label="Primary hex"
 					placeholder="#5865f2"
 					value={primary}
 					status={primaryColor == null ? 'error' : 'default'}
@@ -101,7 +132,7 @@ export default function SettingsComponent({
 					onChange={value => update('primary', value)}
 				/>
 				<TextInput
-					label="Accent color"
+					label="Accent hex"
 					placeholder="#eb459e"
 					value={accent}
 					status={accentColor == null ? 'error' : 'default'}
@@ -125,13 +156,6 @@ export default function SettingsComponent({
 						subLabel="Keep real profile colors if a profile has both Nitro and hidden colors."
 						value={settings.nitroFirst}
 						onValueChange={nitroFirst => storage.set({ nitroFirst })}
-					/>
-					<TableSwitchRow
-						icon={<TableRowAssetIcon name="PencilIcon" />}
-						label="Write colors into bio"
-						subLabel="Replaces old hidden color codes in your bio automatically when you pick a color or save your profile."
-						value={settings.autoBio}
-						onValueChange={autoBio => storage.set({ autoBio })}
 					/>
 				</TableRowGroup>
 			</Page>

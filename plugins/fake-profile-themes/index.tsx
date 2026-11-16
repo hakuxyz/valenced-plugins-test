@@ -1,8 +1,7 @@
 import { getStore } from '@valenced/discord/flux'
 import { after } from '@valenced/patcher'
-import { setupBuilder, setupColorPicker } from './builder'
+import { setupColorPicker } from './color-picker'
 import { currentColors, currentUserId } from './colors'
-import { setupSaveProfile } from './save-profile'
 import SettingsComponent from './settings'
 import { DefaultSettings, decodeColors } from './shared'
 import { currentSettings, setStorage } from './state'
@@ -46,8 +45,6 @@ export default plugin<{ jsonStorage: Settings }>({
 	start({ cleanup, jsonStorage }) {
 		setStorage(jsonStorage)
 		setupColorPicker(cleanup)
-		setupBuilder(cleanup)
-		setupSaveProfile(cleanup)
 		setupThemePreview(cleanup)
 
 		cleanup(
