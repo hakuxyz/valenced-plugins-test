@@ -2,9 +2,10 @@ import { getStore } from '@valenced/discord/flux'
 import { after } from '@valenced/patcher'
 import { setupBuilder, setupColorPicker } from './builder'
 import { currentColors, currentUserId } from './colors'
+import { setupSaveProfile } from './save-profile'
 import SettingsComponent from './settings'
 import { DefaultSettings, decodeColors } from './shared'
-import { setStorage } from './state'
+import { currentSettings, setStorage } from './state'
 import { setupThemePreview } from './theme-preview'
 import type { Settings } from './shared'
 
@@ -46,6 +47,7 @@ export default plugin<{ jsonStorage: Settings }>({
 		setStorage(jsonStorage)
 		setupColorPicker(cleanup)
 		setupBuilder(cleanup)
+		setupSaveProfile(cleanup)
 		setupThemePreview(cleanup)
 
 		cleanup(
@@ -55,7 +57,7 @@ export default plugin<{ jsonStorage: Settings }>({
 						if (!profile || profile.profileFetchFailed) return profile
 
 						try {
-							const settings = { ...DefaultSettings, ...jsonStorage.cache }
+							const settings = currentSettings()
 							const ownId = currentUserId()
 							const isCurrentUser =
 								ownId != null &&

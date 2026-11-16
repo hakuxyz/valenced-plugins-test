@@ -4,19 +4,19 @@ import {
 	FilterScopes,
 	withProps,
 } from '@valenced/modules/finders/filters'
-import { after } from '@valenced/patcher'
+import { instead } from '@valenced/patcher'
 import { currentColors, currentUserId } from './colors'
 import type { AnyFunction } from '@valenced/utils/types'
 
 type Cleanup = (...unpatches: Array<() => boolean | void>) => void
 
-type LooseAfter = (
+type Instead = (args: unknown[], original: AnyFunction) => unknown
+
+const insteadLoose = instead as unknown as (
 	parent: Record<string, AnyFunction>,
 	key: string,
-	hook: (args: unknown[], result: unknown) => unknown,
+	hook: Instead,
 ) => () => boolean
-
-const afterLoose = after as unknown as LooseAfter
 
 /**
  * Matches a module that exposes a function either directly, as a named
@@ -63,8 +63,10 @@ function applyThemePreview(result: unknown) {
 	theme.secondaryColor = colors[1]
 }
 
-function createThemeHook() {
-	return (args: unknown[], result: unknown) => {
+function createThemeHook(): Instead {
+	return (args, original) => {
+		const result = original(...args)
+
 		try {
 			const options = args[0]
 			if (typeof options !== 'object' || options === null) return result
@@ -83,8 +85,10 @@ function createThemeHook() {
 	}
 }
 
-function createThemeColorsHook() {
-	return (args: unknown[], result: unknown) => {
+function createThemeColorsHook(): Instead {
+	return (args, original) => {
+		const result = original(...args)
+
 		try {
 			const user = args[0]
 			const previewProps = args[2]
@@ -100,42 +104,38 @@ function createThemeColorsHook() {
 	}
 }
 
-function patchHook(
-	cleanup: Cleanup,
-	name: string,
-	createHook: () => AnyFunction,
-) {
+function patchHook(cleanup: Cleanup, name: string, createHook: () => Instead) {
 	cleanup(
 		getModules(
 			withFunctionName(name),
 			module => {
-				if (typeof module !== 'object' || module === null) return
+				try {
+					const record = module as Record<string, unknown> | undefined
+					if (!record) return
 
-				const record = module as Record<string, unknown>
-				const hook = createHook()
+					const hook = createHook()
 
-				if (typeof record[name] === 'function') {
-					try {
+					if (typeof record[name] === 'function') {
 						cleanup(
-							afterLoose(record as Record<string, AnyFunction>, name, hook),
+							insteadLoose(record as Record<string, AnyFunction>, name, hook),
 						)
-					} catch {}
-				}
+					}
 
-				const fallback = record.default
-				if (typeof fallback === 'function' && fallback.name === name) {
-					try {
-						cleanup(
-							afterLoose(
-								record as Record<string, AnyFunction>,
-								'default',
-								hook,
-							),
-						)
-					} catch {}
-				}
+					if (record.default !== record[name]) {
+						const fallback = record.default
+						if (typeof fallback === 'function' && fallback.name === name) {
+							cleanup(
+								insteadLoose(
+									record as Record<string, AnyFunction>,
+									'default',
+									hook,
+								),
+							)
+						}
+					}
+				} catch {}
 			},
-			{ max: 3 },
+			{ max: 3, returnNamespace: true },
 		),
 	)
 }
@@ -145,12 +145,16 @@ export function setupThemePreview(cleanup: Cleanup) {
 		getModules(
 			withProps('getProfileTheme'),
 			module => {
-				const fn = (module as { getProfileTheme?: unknown }).getProfileTheme
+				const record = module as {
+					getProfileTheme?: unknown
+					default?: { getProfileTheme?: unknown }
+				}
+				const fn = record?.getProfileTheme ?? record?.default?.getProfileTheme
 				if (typeof fn === 'function') {
 					getProfileTheme = fn as (color: number) => unknown
 				}
 			},
-			{ max: 1 },
+			{ max: 1, returnNamespace: true },
 		),
 	)
 

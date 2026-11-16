@@ -4,18 +4,18 @@ import { Design } from '@valenced/discord/design'
 import { Clipboard } from '@valenced/externals/react-native-clipboard'
 import { getModules } from '@valenced/modules/finders'
 import { withName, withProps } from '@valenced/modules/finders/filters'
-import { before } from '@valenced/patcher'
+import { after, before } from '@valenced/patcher'
 import { React, ReactJSXRuntime } from '@valenced/react'
 import { useState } from 'react'
 import { View } from 'react-native'
 import { refreshProfilePreview } from './refresh'
 import {
 	colorValueToNumber,
-	DefaultSettings,
 	encodeColors,
 	hexToNumber,
+	withColorCode,
 } from './shared'
-import { storage } from './state'
+import { currentSettings, storage } from './state'
 import type { AnyFunction } from '@valenced/utils/types'
 
 const { TableRow, TableRowGroup } = Design
@@ -24,6 +24,27 @@ const EditFormComponents = new Set([
 	'EditUserProfileBio',
 	'EditGuildIdentityBio',
 ])
+
+const BioValueKeys = [
+	'value',
+	'bio',
+	'bioText',
+	'text',
+	'description',
+	'aboutMe',
+	'draft',
+]
+
+const BioSetterKeys = [
+	'onChangeText',
+	'onBioChange',
+	'onChangeBio',
+	'onValueChange',
+	'onChange',
+	'setValue',
+	'setBio',
+	'updateBio',
+]
 
 type Cleanup = (...unpatches: Array<() => boolean | void>) => void
 
@@ -54,13 +75,79 @@ export function setupColorPicker(cleanup: Cleanup) {
 	cleanup(
 		getModules(withProps('showCustomColorPickerActionSheet'), setColorPicker, {
 			max: 1,
+			returnNamespace: true,
 		}),
 	)
 	cleanup(
 		getModules(withName('showCustomColorPickerActionSheet'), setColorPicker, {
 			max: 1,
+			returnNamespace: true,
 		}),
 	)
+}
+
+interface BioHandle {
+	get(): string
+	set(value: string): void
+}
+
+let activeBio: BioHandle | undefined
+
+function findBioHandle(props: ElementProps | undefined): BioHandle | null {
+	if (!props) return null
+
+	let setter: ((value: string) => void) | undefined
+	for (const key of BioSetterKeys) {
+		const value = props[key]
+		if (typeof value === 'function') {
+			setter = value as (value: string) => void
+			break
+		}
+	}
+	if (!setter) return null
+
+	for (const key of BioValueKeys) {
+		if (typeof props[key] !== 'string') continue
+
+		return {
+			// Read from the props object directly so text the user typed after the
+			// last render is not lost when a color is picked.
+			get: () => {
+				const current = props[key]
+				return typeof current === 'string' ? current : ''
+			},
+			set: value => {
+				try {
+					setter?.(value)
+				} catch {}
+			},
+		}
+	}
+
+	return null
+}
+
+function autoBioEnabled() {
+	return currentSettings().autoBio
+}
+
+function writeColorsToBio(primary: string, accent: string): boolean {
+	const primaryColor = hexToNumber(primary)
+	const accentColor = hexToNumber(accent)
+	if (primaryColor == null || accentColor == null) return false
+
+	const handle = activeBio
+	if (!handle) return false
+
+	try {
+		const next = withColorCode(handle.get(), primaryColor, accentColor)
+		if (next == null) return false
+
+		handle.set(next)
+		return true
+	} catch {
+		return false
+	}
 }
 
 function Swatch({ color }: { color: string }) {
@@ -76,8 +163,12 @@ function Swatch({ color }: { color: string }) {
 	)
 }
 
-export default function Builder() {
-	const settings = { ...DefaultSettings, ...(storage?.cache ?? {}) }
+interface BuilderProps {
+	allowBio?: boolean
+}
+
+export default function Builder({ allowBio = false }: BuilderProps) {
+	const settings = currentSettings()
 	const [primary, setPrimary] = useState(settings.primary)
 	const [accent, setAccent] = useState(settings.accent)
 
@@ -98,12 +189,33 @@ export default function Builder() {
 				if (picked == null) return
 
 				const hex = `#${picked.toString(16).padStart(6, '0')}`
+				const nextPrimary = key === 'primary' ? hex : primary
+				const nextAccent = key === 'accent' ? hex : accent
+
 				if (key === 'primary') setPrimary(hex)
 				else setAccent(hex)
 				storage?.set({ [key]: hex })
+
+				if (allowBio && autoBioEnabled()) {
+					writeColorsToBio(nextPrimary, nextAccent)
+				}
 				refreshProfilePreview()
 			},
 		})
+	}
+
+	const writeBio = () => {
+		if (writeColorsToBio(primary, accent)) {
+			ToastActionCreators.open('FAKE_PROFILE_THEMES_BIO_WRITTEN', {
+				text: 'Hidden colors written into your bio. Old color codes were removed.',
+				variant: 'success',
+			})
+		} else {
+			ToastActionCreators.open('FAKE_PROFILE_THEMES_BIO_FAILED', {
+				text: 'Could not write into the bio field. Use Copy 3y3 instead.',
+				variant: 'critical',
+			})
+		}
 	}
 
 	const copy = () => {
@@ -144,6 +256,14 @@ export default function Builder() {
 				onPress={() => pick('accent')}
 				arrow
 			/>
+			{allowBio && activeBio != null && (
+				<TableRow
+					icon={<TableRowAssetIcon name="PencilIcon" />}
+					label="Write colors into bio"
+					subLabel="Replaces older hidden color codes."
+					onPress={writeBio}
+				/>
+			)}
 			<TableRow
 				icon={<TableRowAssetIcon name="CopyIcon" />}
 				label="Copy 3y3 text"
@@ -155,13 +275,106 @@ export default function Builder() {
 }
 
 type ElementProps = Record<string, unknown> & { children?: unknown }
+type Element = { type: unknown; props: ElementProps }
 type JSXArgs = [unknown, ElementProps | undefined, ...unknown[]]
 
-function isEditFormElement(value: unknown) {
-	if (typeof value !== 'object' || value === null) return false
+function isElement(value: unknown): value is Element {
+	return (
+		typeof value === 'object' &&
+		value !== null &&
+		'type' in value &&
+		'props' in value
+	)
+}
 
-	const type = (value as { type?: unknown }).type
-	return typeof type === 'function' && EditFormComponents.has(type.name)
+function getComponentNameFromType(type: unknown): string | null {
+	if (typeof type === 'string') return type
+	if (typeof type === 'function') {
+		const fn = type as { displayName?: string; name?: string }
+		return fn.displayName ?? fn.name ?? null
+	}
+	if (typeof type !== 'object' || type === null) return null
+
+	const record = type as {
+		displayName?: string
+		render?: { displayName?: string; name?: string }
+		type?: unknown
+	}
+	return (
+		record.displayName ??
+		record.render?.displayName ??
+		record.render?.name ??
+		getComponentNameFromType(record.type)
+	)
+}
+
+function isEditFormElement(value: unknown) {
+	if (!isElement(value)) return false
+
+	const name = getComponentNameFromType(value.type)
+	return name != null && EditFormComponents.has(name)
+}
+
+function findParentWithEditForm(node: unknown, depth = 200): Element | null {
+	if (depth <= 0 || !isElement(node)) return null
+
+	const children = node.props.children
+	if (Array.isArray(children) && children.some(isEditFormElement)) {
+		return node
+	}
+
+	if (Array.isArray(children)) {
+		for (const child of children) {
+			const found = findParentWithEditForm(child, depth - 1)
+			if (found) return found
+		}
+	} else if (isElement(children)) {
+		return findParentWithEditForm(children, depth - 1)
+	}
+
+	return null
+}
+
+function updateBioHandle(element: Element) {
+	const name = getComponentNameFromType(element.type)
+	if (name !== 'EditUserProfileBio') return
+
+	const handle = findBioHandle(element.props)
+	if (handle) activeBio = handle
+}
+
+function injectIntoChildren(children: unknown[], allowBio = false): boolean {
+	if (children.some(child => isElement(child) && child.type === Builder)) {
+		return false
+	}
+
+	const index = children.findIndex(isEditFormElement)
+	if (index < 0) return false
+
+	const editForm = children[index] as Element
+	updateBioHandle(editForm)
+
+	children.splice(index + 1, 0, ReactJSXRuntime.jsx(Builder, { allowBio }))
+	return true
+}
+
+function injectIntoTree(tree: unknown): unknown {
+	const parent = findParentWithEditForm(tree)
+	if (!parent) return tree
+
+	const children = parent.props.children
+	if (!Array.isArray(children)) return tree
+
+	const editForm = children.find(isEditFormElement) as Element | undefined
+	const allowBio =
+		editForm != null &&
+		getComponentNameFromType(editForm.type) === 'EditUserProfileBio'
+
+	try {
+		injectIntoChildren(children, allowBio)
+	} catch {}
+
+	return tree
 }
 
 function injectBuilder(args: JSXArgs): JSXArgs {
@@ -169,22 +382,43 @@ function injectBuilder(args: JSXArgs): JSXArgs {
 	const children = props?.children
 	if (!props || !Array.isArray(children)) return args
 
-	const index = children.findIndex(isEditFormElement)
-	if (index < 0) return args
+	const editForm = children.find(isEditFormElement) as Element | undefined
+	const allowBio =
+		editForm != null &&
+		getComponentNameFromType(editForm.type) === 'EditUserProfileBio'
 
-	args[1] = {
-		...props,
-		children: [
-			...children.slice(0, index + 1),
-			ReactJSXRuntime.jsx(Builder, {}),
-			...children.slice(index + 1),
-		],
-	}
+	try {
+		injectIntoChildren(children, allowBio)
+	} catch {}
 
+	args[1] = { ...props, children }
 	return args
 }
 
 export function setupBuilder(cleanup: Cleanup) {
+	for (const name of ['UserProfileEditForm', 'GuildProfileEditForm']) {
+		cleanup(
+			getModules(
+				withName(name),
+				module => {
+					try {
+						const record = module as {
+							default?: AnyFunction
+						}
+						if (typeof record?.default !== 'function') return
+
+						cleanup(
+							after(record as Record<'default', AnyFunction>, 'default', tree =>
+								injectIntoTree(tree),
+							),
+						)
+					} catch {}
+				},
+				{ max: 1, returnNamespace: true },
+			),
+		)
+	}
+
 	const hook = injectBuilder as AnyFunction
 
 	cleanup(

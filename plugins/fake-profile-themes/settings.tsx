@@ -76,8 +76,9 @@ export default function SettingsComponent({
 		<ScrollView keyboardShouldPersistTaps="handled">
 			<Page>
 				<Text variant="text-md/normal" style={{ marginBottom: 12 }}>
-					Pick your colors, copy the hidden text, then paste it anywhere in your
-					bio. Other people with this plugin will see the colors on your
+					Pick your colors. The hidden color code is written into your bio
+					automatically when you save your profile, and older color codes are
+					removed. Other people with this plugin will see the colors on your
 					profile.
 				</Text>
 				<TableRowGroup title="Preview">
@@ -124,6 +125,13 @@ export default function SettingsComponent({
 						subLabel="Keep real profile colors if a profile has both Nitro and hidden colors."
 						value={settings.nitroFirst}
 						onValueChange={nitroFirst => storage.set({ nitroFirst })}
+					/>
+					<TableSwitchRow
+						icon={<TableRowAssetIcon name="PencilIcon" />}
+						label="Write colors into bio"
+						subLabel="Replaces old hidden color codes in your bio automatically when you pick a color or save your profile."
+						value={settings.autoBio}
+						onValueChange={autoBio => storage.set({ autoBio })}
 					/>
 				</TableRowGroup>
 			</Page>
