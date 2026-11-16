@@ -47,8 +47,6 @@ function isOwnUser(user: unknown) {
 }
 
 function applyThemePreview(result: unknown) {
-	if (!getProfileTheme) return
-
 	const colors = currentColors()
 	if (!colors || typeof result !== 'object' || result === null) return
 
@@ -58,9 +56,9 @@ function applyThemePreview(result: unknown) {
 		secondaryColor?: number | null
 	}
 
-	theme.theme = getProfileTheme(colors[0])
 	theme.primaryColor = colors[0]
 	theme.secondaryColor = colors[1]
+	if (getProfileTheme) theme.theme = getProfileTheme(colors[0])
 }
 
 function createThemeHook(): Instead {
