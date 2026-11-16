@@ -3,12 +3,12 @@ export interface ServerNote {
 	note: string
 }
 
-export const DefaultSettings: Settings = {
-	notes: {},
-}
-
 export interface Settings {
 	notes: Record<string, ServerNote>
+}
+
+export const DefaultSettings: Settings = {
+	notes: {},
 }
 
 export const TagColors: Record<string, string> = {
@@ -21,6 +21,18 @@ export const TagColors: Record<string, string> = {
 	red: '#f23f43',
 	orange: '#e67e22',
 	cyan: '#00a8fc',
+}
+
+export const TagColorNames: Record<string, string> = {
+	default: 'Gray',
+	blue: 'Blue',
+	pink: 'Pink',
+	purple: 'Purple',
+	green: 'Green',
+	yellow: 'Yellow',
+	red: 'Red',
+	orange: 'Orange',
+	cyan: 'Cyan',
 }
 
 export const DefaultTagColor = 'default'

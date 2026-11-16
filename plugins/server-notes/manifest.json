@@ -3,8 +3,8 @@
 	"id": "hakuxyz.server-notes",
 	"name": "Server Notes",
 	"description": "Put notes and colored tags on servers so you remember why you joined - or why you left.",
-	"author": "hakuxyz",
-	"version": "1.0.0",
+	"author": "hakuxyz (https://github.com/hakuxyz \"GitHub\")",
+	"version": "1.0.2",
 	"icon": "PencilIcon",
 	"dependencies": {
 		"valenced.api": {
