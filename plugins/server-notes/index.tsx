@@ -28,42 +28,63 @@ const insteadLoose = instead as unknown as (
 	hook: Instead,
 ) => () => boolean
 
+function addMenuItem(
+	items: unknown,
+	guildId: unknown,
+	openEditor: (guildId: string) => void,
+	label = 'Server Note',
+	marker = 'serverNotesAction',
+) {
+	if (!Array.isArray(items)) return items
+	if (typeof guildId !== 'string' || !guildId) return items
+	if (items.some((i: any) => i?.[marker])) return items
+	return [
+		...items,
+		{
+			label,
+			[marker]: true,
+			action: () => openEditor(guildId),
+		},
+	]
+}
+
 function tryPatchGuildMenu(
 	cleanup: (...fns: Array<() => unknown>) => void,
 	openEditor: (guildId: string) => void,
 ) {
-	try {
-		cleanup(
-			getModules(
-				withName('getGuildsBarGuildMenuItems'),
-				(mod: unknown) => {
-					const m = mod as Record<string, AnyFunction>
-					if (typeof m.default !== 'function') return
-					cleanup(
-						after(m, 'default', ((result: unknown, ...rest: unknown[]) => {
-							const items = result
-							const args = (rest[0] as unknown[]) ?? []
-							if (!Array.isArray(items)) return items
-							const guildId = args?.[0]
-							if (typeof guildId !== 'string' || !guildId) return items
-							if (items.some((i: any) => i?.serverNotesAction)) return items
-							return [
-								...items,
-								{
-									label: 'Server Note',
-									serverNotesAction: true,
-									action: () => openEditor(guildId),
-								},
-							]
-						}) as unknown as AnyFunction),
-					)
-				},
-				{ returnNamespace: true, max: 1 },
-			),
-		)
-	} catch {
-		// Context menu patch is best-effort; settings UI still works.
+	const tryName = (name: string, marker: string) => {
+		try {
+			cleanup(
+				getModules(
+					withName(name),
+					(mod: unknown) => {
+						const m = mod as Record<string, AnyFunction>
+						if (typeof m.default !== 'function') return
+						cleanup(
+							after(m, 'default', ((result: unknown, ...rest: unknown[]) => {
+								const args = (rest[0] as unknown[]) ?? []
+								const guildId =
+									args?.[0] ??
+									(args?.[0] as any)?.guildId ??
+									(args?.[0] as any)?.guild?.id
+								return addMenuItem(
+									result,
+									guildId,
+									openEditor,
+									'Server Note',
+									marker,
+								)
+							}) as unknown as AnyFunction),
+						)
+					},
+					{ returnNamespace: true },
+				),
+			)
+		} catch {}
 	}
+
+	tryName('getGuildsBarGuildMenuItems', 'serverNotesAction')
+	tryName('getGuildFolderMenuItems', 'serverNotesFolderAction')
 }
 
 export default plugin<{ jsonStorage: Settings }>({
@@ -81,10 +102,10 @@ export default plugin<{ jsonStorage: Settings }>({
 				const settingsApi = (api as any).pluginSettings
 				if (settingsApi?.openPluginSettings) {
 					settingsApi.openPluginSettings('hakuxyz.server-notes')
+					return
 				}
-			} catch {
-				// Pending id is stored and will be picked up when settings open.
-			}
+			} catch {}
+			// Pending id is stored; user can open plugin settings to edit.
 		}
 
 		tryPatchGuildMenu(cleanup, openEditor)
@@ -103,8 +124,8 @@ export default plugin<{ jsonStorage: Settings }>({
 								const settings = { ...DefaultSettings, ...jsonStorage.cache }
 								const note = settings.notes?.[guild.id]
 								if (note) {
-									guild.tagColor = note.color ?? guild.tagColor
-									guild.note = note.note ?? guild.note
+									;(guild as any).serverNote = note.note
+									;(guild as any).serverNoteColor = note.color
 								}
 							} catch {}
 
