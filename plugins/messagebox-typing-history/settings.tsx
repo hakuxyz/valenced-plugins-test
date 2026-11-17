@@ -6,7 +6,8 @@ import type { PluginSettingsComponent } from '@valenced/plugins/types'
 import type { ComponentProps } from 'react'
 import type { Settings } from './shared'
 
-const { TableSwitchRow, TableRowGroup, Text } = Design
+const { TableRadioGroup, TableRadioRow, TableSwitchRow, TableRowGroup, Text } =
+	Design
 
 type Props = ComponentProps<PluginSettingsComponent<{ jsonStorage: Settings }>>
 
@@ -37,6 +38,17 @@ export default function SettingsComponent({
 						onValueChange={gestures => storage.set({ gestures })}
 					/>
 				</TableRowGroup>
+
+				<TableRadioGroup
+					title="Button size"
+					value={settings.size}
+					onChange={size => storage.set({ size })}
+				>
+					<TableRadioRow label="Small" value="small" />
+					<TableRadioRow label="Normal" value="normal" />
+					<TableRadioRow label="Large" value="large" />
+					<TableRadioRow label="Extra large" value="extraLarge" />
+				</TableRadioGroup>
 			</Page>
 		</ScrollView>
 	)

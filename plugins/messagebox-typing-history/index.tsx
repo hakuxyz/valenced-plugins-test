@@ -44,12 +44,29 @@ const seen = new Set<unknown>()
 /** Input instances whose handler we already observe. */
 const wired = new WeakSet<object>()
 
+/** Wrappers installed over an input handler, keyed by the original. */
+const inputWrappers = new WeakMap<object, AnyFunction>()
+
+/** Marks a handler as wrapped, so it is never wrapped a second time. */
+const WRAPPED = '__hakuxyzTypingHistory'
+
 /** Cleanup registry of the running lifecycle, used while rendering. */
 let register: Cleanup | undefined
 /** Latest input instance, the preferred writer for history. */
 let latestInstance: any
 /** Latest input props, used to resolve the live channel. */
 let latestInputProps: any
+/**
+ * The ref object itself, not its value.
+ *
+ * `chatInputRef.current` is only filled in after the children mounted, and
+ * the wrapper around the input is not guaranteed to render again afterwards.
+ * Keeping the object means the instance can be resolved at the moment
+ * history is applied instead of during whichever render happened to see it.
+ */
+let refHolderRef: any
+/** Chat input module, used as a writer only when nothing else is reachable. */
+let chatModule: any
 /** Channel the latest render belongs to. */
 let latestChannel = ''
 /**
@@ -145,11 +162,12 @@ function channelFrom(...candidates: any[]): string | undefined {
 
 /** Channel of the box we last rendered, used while recording keystrokes. */
 function liveChannel(): string {
+	const instance = resolveInstance()
 	return channelFor(
 		channelFrom(
 			latestInputProps?.channelId,
-			latestInstance?.props?.channelId,
-			latestInstance?.props?.channel?.id,
+			instance?.props?.channelId,
+			instance?.props?.channel?.id,
 		),
 	)
 }
@@ -201,6 +219,126 @@ function locate(node: any, ancestors: any[], depth = 0): Located | undefined {
 }
 
 /**
+ * Observes typing through the instance handler, once per instance.
+ *
+ * Reading keystrokes this way survives minification, which is why the known
+ * chat plugins use the same hook.
+ */
+function wireInstance(instance: any) {
+	if (wired.has(instance)) return
+	if (typeof instance?.handleTextChanged !== 'function') return
+	try {
+		const unpatch = beforeLoose(
+			instance,
+			'handleTextChanged',
+			(args: any[]) => {
+				try {
+					const text = args?.[0]
+					if (typeof text === 'string') record(liveChannel(), text)
+				} catch {}
+				// Valenced replaces the call arguments with the return value.
+				return args
+			},
+		)
+		wired.add(instance)
+		register?.(() => {
+			wired.delete(instance)
+			unpatch()
+		})
+	} catch {}
+}
+
+/**
+ * Records keystrokes through the input's own `onChangeText`.
+ *
+ * This is the path that works without an instance, which matters because the
+ * ref is empty during the first render. The handler is wrapped in place, once
+ * per original function, and the original is called unchanged with whatever
+ * receiver it was called with before.
+ */
+function wireInput(inputProps: any) {
+	try {
+		const original = inputProps?.onChangeText
+		if (typeof original !== 'function') return
+		if ((original as any)[WRAPPED]) return
+
+		let wrapper = inputWrappers.get(original)
+		if (!wrapper) {
+			wrapper = function (this: any, ...args: any[]) {
+				try {
+					const text = args[0]
+					if (typeof text === 'string') record(liveChannel(), text)
+				} catch {}
+				return (original as AnyFunction).apply(this, args)
+			}
+			;(wrapper as any)[WRAPPED] = true
+			inputWrappers.set(original, wrapper)
+		}
+		inputProps.onChangeText = wrapper
+	} catch {}
+}
+
+/**
+ * Resolves the chat input instance when it is actually needed.
+ *
+ * Prefers an object that really exposes the handler, so a callback ref or a
+ * native input handle can never be mistaken for it.
+ */
+function resolveInstance(): any {
+	const candidates = [
+		refTarget(refHolderRef),
+		refTarget(latestInputProps?.chatInputRef),
+		refTarget(latestInputProps?.inputRef),
+		latestInstance,
+	]
+	let fallback: any
+	for (const candidate of candidates) {
+		if (!candidate || typeof candidate !== 'object') continue
+		if (typeof candidate.handleTextChanged === 'function') {
+			latestInstance = candidate
+			wireInstance(candidate)
+			return candidate
+		}
+		fallback ??= candidate
+	}
+	return fallback
+}
+
+/**
+ * Writes a history entry back into the message box.
+ *
+ * The text can be reached through the live input props, through the instance
+ * behind `chatInputRef` or through the chat input module, and which of them
+ * is alive depends on when the last render happened. Every path that exists
+ * is called with the same text: they all mean "the text is now this", each
+ * one is guarded, and a stale target can never break the others.
+ */
+function applyText(text: string) {
+	const called = new Set<unknown>()
+
+	const call = (owner: any, key: string) => {
+		try {
+			const fn = owner?.[key]
+			if (typeof fn !== 'function' || called.has(fn)) return
+			called.add(fn)
+			fn.call(owner, text)
+		} catch {}
+	}
+
+	// What the visible input is driven by.
+	call(latestInputProps, 'onChangeText')
+	call(latestInputProps, 'handleTextChanged')
+
+	// The instance behind the ref, resolved only now.
+	const instance = resolveInstance()
+	call(instance, 'handleTextChanged')
+	call(instance?.props, 'onChangeText')
+
+	// Nothing live was reachable: fall back to the module level setter.
+	if (called.size === 0) call(chatModule, 'changeText')
+}
+
+/**
  * Injects the pill, observes typing and wires up the gestures.
  *
  * The tree is only touched when it can be proven to be the message box:
@@ -230,13 +368,24 @@ function decorate(result: any, allowInject: boolean): any {
 		const inputProps = located?.input?.props
 		if (inputProps) latestInputProps = inputProps
 
-		const instance =
-			refTarget(refHolder?.props?.chatInputRef) ??
-			refTarget(inputProps?.chatInputRef) ??
-			refTarget(inputProps?.ref) ??
-			refTarget(inputProps?.inputRef) ??
-			refTarget(inputProps?.textInputRef)
-		if (instance) latestInstance = instance
+		// Keep the ref object, not its value: the value only exists after the
+		// children mounted, and this component may never render again.
+		const refs = [
+			refHolder?.props?.chatInputRef,
+			inputProps?.chatInputRef,
+			inputProps?.inputRef,
+			inputProps?.textInputRef,
+			inputProps?.ref,
+		]
+		for (const ref of refs) {
+			if (ref && typeof ref === 'object' && 'current' in ref) {
+				refHolderRef = ref
+				break
+			}
+		}
+
+		if (inputProps) wireInput(inputProps)
+		const instance = resolveInstance()
 
 		const channelId = channelFor(
 			channelFrom(
@@ -251,43 +400,6 @@ function decorate(result: any, allowInject: boolean): any {
 			channelId,
 			inputProps?.value ?? inputProps?.defaultValue ?? instance?.state?.text,
 		)
-
-		// Reading keystrokes through the instance handler survives minification.
-		if (
-			instance &&
-			typeof instance === 'object' &&
-			!wired.has(instance) &&
-			typeof instance.handleTextChanged === 'function'
-		) {
-			try {
-				const unpatch = beforeLoose(
-					instance,
-					'handleTextChanged',
-					(args: any[]) => {
-						try {
-							const text = args?.[0]
-							if (typeof text === 'string') record(liveChannel(), text)
-						} catch {}
-						// Valenced replaces the call arguments with the return value.
-						return args
-					},
-				)
-				wired.add(instance)
-				register?.(() => {
-					wired.delete(instance)
-					unpatch()
-				})
-			} catch {}
-		}
-
-		setApplier(text => {
-			try {
-				const target = latestInstance
-				if (target && typeof target.handleTextChanged === 'function') {
-					target.handleTextChanged(text)
-				}
-			} catch {}
-		})
 
 		if (allowInject) {
 			// Prefer the component root once `chatInputRef` proved this is the
@@ -458,6 +570,18 @@ function bootstrap(cleanup: Cleanup, jsonStorage: any) {
 		...(jsonStorage ?? {}),
 	}))
 	setGestureChannelGetter(() => latestChannel || channelFor())
+	setApplier(applyText)
+	// Last resort writer, only used when neither the input props nor the
+	// instance behind the ref are reachable.
+	cleanup(
+		getModules(
+			withProps('handleSendMessage', 'changeText'),
+			module => {
+				chatModule ??= module
+			},
+			{ max: 1 },
+		),
+	)
 	cleanup(
 		getModules(withName(GUARD_NAME), ns => scanGuard(ns, cleanup), {
 			returnNamespace: true,

@@ -10,12 +10,76 @@ import {
 	subscribe,
 	undo,
 } from './state'
+import type { ButtonSize } from './shared'
 
 const { Text } = Design
 
 interface Props {
 	channelId: string
 }
+
+/** Geometry of the pill for one button size. */
+interface Metrics {
+	/** Width of a single button. */
+	width: number
+	/** Height of a single button. */
+	height: number
+	fontSize: number
+	lineHeight: number
+	/** Padding of the pill around the buttons. */
+	padH: number
+	padV: number
+	/** Radius of the pill. */
+	radius: number
+	/** Height of the divider between the buttons. */
+	divider: number
+}
+
+const METRICS: Record<ButtonSize, Metrics> = {
+	small: {
+		width: 22,
+		height: 18,
+		fontSize: 12,
+		lineHeight: 14,
+		padH: 2,
+		padV: 1,
+		radius: 11,
+		divider: 10,
+	},
+	normal: {
+		width: 28,
+		height: 24,
+		fontSize: 15,
+		lineHeight: 18,
+		padH: 2,
+		padV: 2,
+		radius: 14,
+		divider: 14,
+	},
+	large: {
+		width: 34,
+		height: 29,
+		fontSize: 18,
+		lineHeight: 22,
+		padH: 3,
+		padV: 3,
+		radius: 17,
+		divider: 18,
+	},
+	extraLarge: {
+		width: 42,
+		height: 36,
+		fontSize: 22,
+		lineHeight: 26,
+		padH: 4,
+		padV: 4,
+		radius: 22,
+		divider: 24,
+	},
+}
+
+/** Gap between the pill and the message box, same for every size. */
+const GAP = 6
 
 /** Snapshot is a string so React can compare it by value. */
 function snapshot(channelId: string) {
@@ -27,11 +91,13 @@ function Button({
 	accessibilityLabel,
 	disabled,
 	onPress,
+	metrics,
 }: {
 	label: string
 	accessibilityLabel: string
 	disabled: boolean
 	onPress: () => void
+	metrics: Metrics
 }) {
 	return (
 		<Pressable
@@ -41,11 +107,22 @@ function Button({
 			onPress={onPress}
 			style={({ pressed }) => [
 				styles.button,
+				{
+					width: metrics.width,
+					height: metrics.height,
+					borderRadius: metrics.height / 2,
+				},
 				pressed && styles.pressed,
 				disabled && styles.disabled,
 			]}
 		>
-			<Text variant="text-sm/semibold" style={styles.glyph}>
+			<Text
+				variant="text-sm/semibold"
+				style={[
+					styles.glyph,
+					{ fontSize: metrics.fontSize, lineHeight: metrics.lineHeight },
+				]}
+			>
 				{label}
 			</Text>
 		</Pressable>
@@ -58,6 +135,7 @@ function Button({
  */
 export default function TypingHistoryPill({ channelId }: Props) {
 	const settings = currentSettings()
+	const metrics = METRICS[settings.size] ?? METRICS.normal
 	const state = useSyncExternalStore(
 		subscribe,
 		() => snapshot(channelFor(channelId)),
@@ -68,19 +146,32 @@ export default function TypingHistoryPill({ channelId }: Props) {
 	const canGoForward = state[1] === '1'
 
 	return (
-		<View style={styles.pill} pointerEvents="box-none">
+		<View
+			style={[
+				styles.pill,
+				{
+					top: -(metrics.height + metrics.padV * 2 + GAP),
+					borderRadius: metrics.radius,
+					paddingHorizontal: metrics.padH,
+					paddingVertical: metrics.padV,
+				},
+			]}
+			pointerEvents="box-none"
+		>
 			<Button
 				label="↶"
 				accessibilityLabel="Undo typing"
 				disabled={!settings.buttons || !canGoBack}
 				onPress={() => undo(channelFor(channelId))}
+				metrics={metrics}
 			/>
-			<View style={styles.divider} />
+			<View style={[styles.divider, { height: metrics.divider }]} />
 			<Button
 				label="↷"
 				accessibilityLabel="Redo typing"
 				disabled={!settings.buttons || !canGoForward}
 				onPress={() => redo(channelFor(channelId))}
+				metrics={metrics}
 			/>
 		</View>
 	)
@@ -89,24 +180,18 @@ export default function TypingHistoryPill({ channelId }: Props) {
 const styles = StyleSheet.create({
 	pill: {
 		position: 'absolute',
-		right: 4,
-		top: -34,
+		// In line with the message box instead of hanging off its right edge.
+		right: 16,
 		zIndex: 5,
 		flexDirection: 'row',
 		alignItems: 'center',
 		backgroundColor: '#2b2d31',
-		borderRadius: 14,
-		paddingHorizontal: 2,
-		paddingVertical: 2,
 		borderWidth: StyleSheet.hairlineWidth,
 		borderColor: '#1e1f22',
 	},
 	button: {
-		width: 28,
-		height: 24,
 		alignItems: 'center',
 		justifyContent: 'center',
-		borderRadius: 12,
 	},
 	pressed: {
 		backgroundColor: '#3f4147',
@@ -116,12 +201,9 @@ const styles = StyleSheet.create({
 	},
 	glyph: {
 		color: '#dbdee1',
-		fontSize: 15,
-		lineHeight: 18,
 	},
 	divider: {
 		width: StyleSheet.hairlineWidth,
-		height: 14,
 		backgroundColor: '#3f4147',
 	},
 })
