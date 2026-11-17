@@ -133,7 +133,8 @@ export default function OnekoOverlay() {
 		<View
 			pointerEvents="none"
 			collapsable={false}
-			style={StyleSheet.absoluteFillObject}
+			// Drawn above the screen content, matching the proven overlays.
+			style={[StyleSheet.absoluteFillObject, { zIndex: 9999 }]}
 			onLayout={e => {
 				area.current = {
 					w: e.nativeEvent.layout.width,

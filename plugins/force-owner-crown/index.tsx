@@ -36,6 +36,28 @@ const beforeLoose = before as unknown as LooseBefore
 const afterLoose = after as unknown as LooseAfter
 const insteadLoose = instead as unknown as LooseInstead
 
+/**
+ * Metro re-exports members as getters on the module namespace, and a plain
+ * assignment cannot replace a getter. Rewrite such a member as a normal
+ * writable property holding the same function, so the patcher can hook it
+ * instead of failing silently.
+ */
+function ensureWritable(parent: any, key: string): void {
+	try {
+		const desc = Object.getOwnPropertyDescriptor(parent, key)
+		if (!desc || desc.configurable === false) return
+		if ('value' in desc && desc.writable) return
+		const value = parent[key]
+		if (typeof value !== 'function') return
+		Object.defineProperty(parent, key, {
+			value,
+			writable: true,
+			enumerable: desc.enumerable,
+			configurable: true,
+		})
+	} catch {}
+}
+
 interface User {
 	id: string
 	username?: string
@@ -54,6 +76,7 @@ interface Member {
 interface RowProps {
 	user?: User
 	guildId?: string
+	[key: string]: unknown
 }
 
 interface GuildStoreLike {
@@ -66,6 +89,10 @@ interface MemberStoreLike {
 
 interface SelectedGuildStoreLike {
 	getGuildId(): string | undefined
+}
+
+interface UserStoreLike {
+	getUser(id: string): User | undefined
 }
 
 interface Slot {
@@ -82,7 +109,13 @@ const CROWN_ASSET_NAMES = [
 	'Crown',
 ]
 
-let crownAssetId: number | undefined
+/**
+ * Asset registered at runtime whose name merely contains "crown". Only a
+ * fallback: it may just as well be a boost crown or a badge.
+ */
+let registeredCrownId: number | undefined
+/** Cached once a lookup succeeded, so rows do not rescan assets. */
+let resolvedCrown: number | { uri: string } | undefined
 const crownFallback: { uri: string } = {
 	uri: `data:image/png;base64,${CROWN_PNG}`,
 }
@@ -98,28 +131,43 @@ function storeByName(name: string): Record<string, AnyFunction> | undefined {
 }
 
 function resolveCrownSource(): number | { uri: string } {
-	if (typeof crownAssetId === 'number') return crownAssetId
+	if (resolvedCrown) return resolvedCrown
 
+	// Exact names first. A runtime "crown" match may be an unrelated icon,
+	// and until now it preempted this lookup and could render the wrong
+	// glyph instead of the owner crown.
 	for (const name of CROWN_ASSET_NAMES) {
 		try {
 			const id = getAssetIdByName(name)
 			if (typeof id === 'number' && id > 0) {
-				crownAssetId = id
+				resolvedCrown = id
 				return id
 			}
 		} catch {}
 	}
 
+	if (typeof registeredCrownId === 'number') {
+		resolvedCrown = registeredCrownId
+		return registeredCrownId
+	}
+
 	try {
 		for (const asset of getAssets()) {
 			if (/crown/i.test(asset.name ?? '')) {
-				crownAssetId = asset.id
+				resolvedCrown = asset.id
 				return asset.id
 			}
 		}
 	} catch {}
 
+	resolvedCrown = crownFallback
 	return crownFallback
+}
+
+/** Numeric asset id of the crown, once one resolved to an asset. */
+function crownAssetId(): number | undefined {
+	resolveCrownSource()
+	return typeof resolvedCrown === 'number' ? resolvedCrown : undefined
 }
 
 function nodeTypeName(node: any): string {
@@ -163,10 +211,11 @@ function isCrownNode(node: any): boolean {
 		return true
 
 	const source = props.source
+	const crownId = crownAssetId()
 	if (
 		typeof source === 'number' &&
-		typeof crownAssetId === 'number' &&
-		source === crownAssetId
+		typeof crownId === 'number' &&
+		source === crownId
 	) {
 		return true
 	}
@@ -226,6 +275,17 @@ function isRowOwner(owner: Slot['owner']): boolean {
 	return false
 }
 
+/**
+ * Whether the slot owner renders text. An image is not a valid child of a
+ * `Text`, so such a slot is never used for the crown.
+ */
+function isTextOwner(owner: Slot['owner']): boolean {
+	const name = nodeTypeName(owner)
+	if (name === 'Text' || name === 'RCTText') return true
+	const type = (owner as any)?.type
+	return type === 'Text' || type === 'RCTText'
+}
+
 /** Row containers in the tree, deepest first, used when no name was found. */
 function collectRows(node: any, owner: Slot['owner'], out: Slot[]): void {
 	if (Array.isArray(node)) {
@@ -259,8 +319,43 @@ function selectedGuildStore(): SelectedGuildStoreLike | undefined {
 		| undefined
 }
 
+function userStore(): UserStoreLike | undefined {
+	return storeByName('UserStore') as unknown as UserStoreLike | undefined
+}
+
+/**
+ * The user a row renders. Not every build puts `user` on the row props, so
+ * the member object and a plain `userId` are tried as well.
+ */
+function resolveUser(props: RowProps | undefined): User | undefined {
+	if (!props) return undefined
+
+	const direct = props.user
+	if (direct && typeof direct.id === 'string' && direct.id) return direct
+
+	const fromMember = (props as any).member?.user
+	if (fromMember && typeof fromMember.id === 'string' && fromMember.id) {
+		return fromMember as User
+	}
+
+	const id = (props as any).userId
+	if (typeof id === 'string' && id) {
+		try {
+			const found = userStore()?.getUser?.(id)
+			if (found && typeof found.id === 'string' && found.id) return found
+		} catch {}
+	}
+
+	return undefined
+}
+
 function currentGuildId(props: RowProps): string | undefined {
-	if (typeof props.guildId === 'string' && props.guildId) return props.guildId
+	const p = props as any
+	if (typeof p?.guildId === 'string' && p.guildId) return p.guildId
+	if (typeof p?.guild?.id === 'string' && p.guild.id) return p.guild.id
+	if (typeof p?.channel?.guild_id === 'string' && p.channel.guild_id) {
+		return p.channel.guild_id
+	}
 	try {
 		return selectedGuildStore()?.getGuildId?.()
 	} catch {
@@ -283,9 +378,6 @@ function candidateNames(user: User, guildId: string): string[] {
 }
 
 function decorate(result: any, props: RowProps | undefined): any {
-	const user = props?.user
-	if (!user?.id) return result
-
 	const guildId = currentGuildId(props ?? {})
 	if (!guildId) return result
 
@@ -295,22 +387,49 @@ function decorate(result: any, props: RowProps | undefined): any {
 	} catch {
 		guild = undefined
 	}
-	if (!guild || guild.ownerId !== user.id) return result
+	if (!guild?.ownerId) return result
 
-	// Discord already rendered a crown somewhere in this row.
-	if (walk(result, isCrownNode)) return result
-
-	const names = candidateNames(user, guildId)
+	const user = resolveUser(props)
+	const knownOwner = !!user
+	let names: string[]
+	if (user) {
+		// The row tells us who it renders, so only the owner may match.
+		if (user.id !== guild.ownerId) return result
+		names = candidateNames(user, guildId)
+	} else {
+		// Without a user on the props the rendered name is the only proof
+		// that this row is the owner. `collectSlots` matches on it as well,
+		// so other rows can never receive a crown.
+		let owner: User | undefined
+		try {
+			owner = userStore()?.getUser?.(guild.ownerId)
+		} catch {
+			owner = undefined
+		}
+		if (!owner) return result
+		names = candidateNames(owner, guildId)
+	}
 	if (names.length === 0) return result
 
-	const slots: Slot[] = []
+	// Cheap gate for the fallback path: a row that does not show one of the
+	// owner's names cannot be the owner row.
+	if (!knownOwner && !containsName(result, names)) return result
+
+	// Discord already rendered a crown somewhere in this row.
+	resolveCrownSource()
+	if (walk(result, isCrownNode)) return result
+
+	// Name based slots first, so the crown lands next to the username. Text
+	// owners are dropped because an image is not a valid child of a `Text`.
+	let slots: Slot[] = []
 	collectSlots(result, null, names, slots)
-	// Fall back to the outermost row when the display name is not in the tree.
-	if (slots.length === 0) collectRows(result, null, slots)
+	slots = slots.filter(slot => !isTextOwner(slot.owner))
+	// The name agnostic row fallback is only safe when the row is known to
+	// be the owner; otherwise it would decorate every row in the list.
+	if (slots.length === 0 && knownOwner) collectRows(result, null, slots)
 	if (slots.length === 0) return result
 
-	const deepest = slots[0]
-	const slot = slots.find(isRowContainer) ?? deepest
+	const slot = slots.find(isRowContainer) ?? slots[0]
 
 	slot.children.splice(
 		slot.index + 1,
@@ -421,6 +540,7 @@ function installRowPatch(mod: unknown, cleanup: Cleanup, seen: Set<unknown>) {
 	const m = mod as Record<string, any> | null
 	const row = m?.GuildMemberRow
 	if (!row) return
+	ensureWritable(m, 'GuildMemberRow')
 	patchRenderable(
 		row,
 		m as Record<string, AnyFunction>,
@@ -445,10 +565,10 @@ export default plugin({
 		cleanup(
 			onAnyAssetRegistered(asset => {
 				if (
-					typeof crownAssetId !== 'number' &&
+					registeredCrownId === undefined &&
 					/crown/i.test((asset as { name?: string })?.name ?? '')
 				) {
-					crownAssetId = (asset as { id: number }).id
+					registeredCrownId = (asset as { id: number }).id
 				}
 			}),
 		)

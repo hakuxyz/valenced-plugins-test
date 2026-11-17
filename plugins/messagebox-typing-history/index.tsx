@@ -60,15 +60,34 @@ let guardActive = false
 /** Set by the last `decorate` call when it found a place for the pill. */
 let injected = false
 
+/**
+ * The only keys `findInTree` may descend into.
+ *
+ * Without this it walks every own key, and a React element exposes `_owner`,
+ * `ref` and `type` right next to `props`. `_owner` is a fiber, and a fiber
+ * links to `child`, `sibling`, `return` and `alternate`, so the walk escapes
+ * into the whole application tree on every render and saturates the JS
+ * thread. Restricting the walk to the element tree keeps it linear and
+ * makes the fiber graph unreachable.
+ */
+const WALKABLE = new Set(['props', 'children'])
+
+/** Search depth of the bounded walk, generous for deep input subtrees. */
+const MAX_FIND_DEPTH = 80
+
 /** `findInTree` only narrows for type guards, so wrap every search. */
 function findNode(tree: any, predicate: (node: any) => boolean): any {
-	return findInTree(tree, (node: any): node is Record<string, any> => {
-		try {
-			return predicate(node)
-		} catch {
-			return false
-		}
-	}) as any
+	return findInTree(
+		tree,
+		(node: any): node is Record<string, any> => {
+			try {
+				return predicate(node)
+			} catch {
+				return false
+			}
+		},
+		{ walkable: WALKABLE, maxDepth: MAX_FIND_DEPTH },
+	) as any
 }
 
 function typeName(node: any): string {
@@ -148,7 +167,8 @@ interface Located {
  * ancestors, so both the row and the responder host can be resolved.
  */
 function locate(node: any, ancestors: any[], depth = 0): Located | undefined {
-	if (node == null || depth > 40) return undefined
+	// Only `props.children` is ever followed, so this stays linear.
+	if (node == null || depth > MAX_FIND_DEPTH) return undefined
 
 	if (Array.isArray(node)) {
 		for (const child of node) {
@@ -212,6 +232,7 @@ function decorate(result: any, allowInject: boolean): any {
 
 		const instance =
 			refTarget(refHolder?.props?.chatInputRef) ??
+			refTarget(inputProps?.chatInputRef) ??
 			refTarget(inputProps?.ref) ??
 			refTarget(inputProps?.inputRef) ??
 			refTarget(inputProps?.textInputRef)

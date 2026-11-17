@@ -1,6 +1,6 @@
 import { getModules } from '@valenced/modules/finders'
 import { withProps } from '@valenced/modules/finders/filters'
-import { after } from '@valenced/patcher'
+import { before, instead } from '@valenced/patcher'
 import { createElement } from 'react'
 import OnekoOverlay from './overlay'
 import SettingsComponent from './settings'
@@ -11,23 +11,56 @@ import type { Settings } from './shared'
 
 type Cleanup = (...fns: Array<() => unknown>) => void
 
-type LooseAfter = (
+type LooseBefore = (
 	parent: Record<string, AnyFunction>,
 	key: string,
-	hook: (result: any) => any,
+	hook: (args: any[]) => any,
 ) => () => void
 
-const afterLoose = after as unknown as LooseAfter
+type LooseInstead = (
+	parent: Record<string, AnyFunction>,
+	key: string,
+	hook: (this: any, args: any[], original: AnyFunction) => any,
+) => () => void
+
+const beforeLoose = before as unknown as LooseBefore
+const insteadLoose = instead as unknown as LooseInstead
 
 const OVERLAY_KEY = 'hakuxyz-oneko-overlay'
 
 /** Props objects we already injected into, to avoid duplicates. */
 const mounted = new WeakSet<object>()
 
-function styleList(style: unknown): unknown[] {
-	if (Array.isArray(style)) return style
-	if (style && typeof style === 'object') return [style]
-	return []
+/**
+ * Metro re-exports members such as `react-native`'s `View` as getters on the
+ * module namespace, and a plain assignment cannot replace a getter. Rewrite
+ * such a member as a normal writable property holding the same function, so
+ * the patcher can hook it instead of failing silently.
+ */
+function ensureWritable(parent: any, key: string): void {
+	try {
+		const desc = Object.getOwnPropertyDescriptor(parent, key)
+		if (!desc || desc.configurable === false) return
+		if ('value' in desc && desc.writable) return
+		const value = parent[key]
+		if (typeof value !== 'function') return
+		Object.defineProperty(parent, key, {
+			value,
+			writable: true,
+			enumerable: desc.enumerable,
+			configurable: true,
+		})
+	} catch {}
+}
+
+/** Recursively flattens nested style arrays, as `StyleSheet.flatten` does. */
+function flattenStyle(style: unknown, out: unknown[] = []): unknown[] {
+	if (Array.isArray(style)) {
+		for (const entry of style) flattenStyle(entry, out)
+	} else if (style != null) {
+		out.push(style)
+	}
+	return out
 }
 
 /**
@@ -59,9 +92,11 @@ function isNavStack(node: any): boolean {
 /** Whether this element is the app root view holding the navigation stack. */
 function isRootProps(props: any): boolean {
 	if (!props || typeof props !== 'object') return false
+	// Deep flattened: the style may be a nested array of style objects.
 	if (
-		!styleList(props.style).some(
-			(s: any) => s && typeof s === 'object' && s.flex === 1,
+		!flattenStyle(props.style).some(
+			(s: any) =>
+				s && typeof s === 'object' && (s.flex === 1 || s.flexGrow === 1),
 		)
 	) {
 		return false
@@ -75,9 +110,15 @@ function isRootProps(props: any): boolean {
 	return isNavStack(props)
 }
 
-/** Injects the cat overlay and touch tracking into the root view props. */
+/**
+ * Injects the cat overlay and touch tracking into the given props.
+ *
+ * The props are the ones the caller passed to `View`, so mutating them
+ * changes what `View` actually renders - the same approach the proven
+ * root view injections use.
+ */
 function mountInto(props: any) {
-	if (mounted.has(props)) return
+	if (!props || typeof props !== 'object' || mounted.has(props)) return
 	mounted.add(props)
 
 	const children = props.children
@@ -88,25 +129,48 @@ function mountInto(props: any) {
 			: []
 	props.children = [...list, createElement(OnekoOverlay, { key: OVERLAY_KEY })]
 
+	// The root view almost never becomes the responder itself, so the plain
+	// responder events never reach it. Capture phase decision events are
+	// dispatched from the root down for every touch, which makes them the
+	// reliable place to observe touch positions. They must never claim the
+	// responder, so the original result is passed through untouched.
+	const prevStartCapture = props.onStartShouldSetResponderCapture
+	const prevMoveCapture = props.onMoveShouldSetResponderCapture
 	const prevGrant = props.onResponderGrant
 	const prevMove = props.onResponderMove
+
+	const wrapCapture = (previous: unknown) => (event: any) => {
+		let result: any
+		try {
+			if (typeof previous === 'function') result = previous(event)
+		} catch {}
+		try {
+			trackTouch(event)
+		} catch {}
+		return result
+	}
+
+	props.onStartShouldSetResponderCapture = wrapCapture(prevStartCapture)
+	props.onMoveShouldSetResponderCapture = wrapCapture(prevMoveCapture)
 	props.onResponderGrant = (event: any) => {
-		trackTouch(event)
+		try {
+			trackTouch(event)
+		} catch {}
 		if (typeof prevGrant === 'function') prevGrant(event)
 	}
 	props.onResponderMove = (event: any) => {
-		trackTouch(event)
+		try {
+			trackTouch(event)
+		} catch {}
 		if (typeof prevMove === 'function') prevMove(event)
 	}
 }
 
-function tryMount(result: any): any {
+/** Checks the props of a `View` render and injects when it is the root. */
+function mountProps(props: any) {
 	try {
-		if (result && typeof result === 'object' && isRootProps(result.props)) {
-			mountInto(result.props)
-		}
+		if (isRootProps(props)) mountInto(props)
 	} catch {}
-	return result
 }
 
 /** Parent/key pairs already hooked, so every module holding a view is patched. */
@@ -150,7 +214,7 @@ function register(
 	})
 }
 
-/** Patches a component so its rendered element passes through tryMount. */
+/** Patches a component so its props pass through `mountProps` before it runs. */
 function patchComponent(
 	target: any,
 	parent: Record<string, AnyFunction>,
@@ -161,25 +225,46 @@ function patchComponent(
 	if (!target || depth > 3) return
 
 	if (typeof target === 'function') {
+		// Class component: render() takes no props, read them from the instance.
 		if (typeof target.prototype?.render === 'function') {
 			const proto = target.prototype as unknown as Record<string, AnyFunction>
 			register(cleanup, proto, 'render', () =>
-				afterLoose(proto, 'render', tryMount),
+				insteadLoose(
+					proto,
+					'render',
+					function (this: any, args: any[], original: AnyFunction) {
+						mountProps(this?.props)
+						return original.apply(this, args)
+					},
+				),
 			)
 			return
 		}
-		register(cleanup, parent, key, () => afterLoose(parent, key, tryMount))
+		// Plain function component: the props are the first call argument.
+		ensureWritable(parent, key)
+		register(cleanup, parent, key, () =>
+			beforeLoose(parent, key, (args: any[]) => {
+				mountProps(args?.[0])
+				// Valenced replaces the call arguments with the return value.
+				return args
+			}),
+		)
 		return
 	}
 
 	if (typeof target === 'object') {
+		// forwardRef wrapper: render(props, ref).
 		if (typeof target.render === 'function') {
 			const ref = target as unknown as Record<string, AnyFunction>
 			register(cleanup, ref, 'render', () =>
-				afterLoose(ref, 'render', tryMount),
+				beforeLoose(ref, 'render', (args: any[]) => {
+					mountProps(args?.[0])
+					return args
+				}),
 			)
 			return
 		}
+		// memo wrapper: hook the inner type through the memo object.
 		if (target.type) {
 			patchComponent(
 				target.type,
