@@ -1,6 +1,7 @@
 import { getModules } from '@valenced/modules/finders'
-import { withProps } from '@valenced/modules/finders/filters'
-import { after } from '@valenced/patcher'
+import { withName, withProps } from '@valenced/modules/finders/filters'
+import { after, before } from '@valenced/patcher'
+import { findInTree } from '@valenced/utils/tree'
 import { createElement } from 'react'
 import { attachGestures, setGestureChannelGetter } from './gestures'
 import TypingHistoryPill from './pill'
@@ -25,20 +26,55 @@ type LooseAfter = (
 	hook: (result: any) => any,
 ) => () => void
 
+type LooseBefore = (
+	parent: Record<string, AnyFunction>,
+	key: string,
+	hook: (args: any[]) => any,
+) => () => void
+
 const afterLoose = after as unknown as LooseAfter
+const beforeLoose = before as unknown as LooseBefore
 
 const PILL_KEY = 'hakuxyz-typing-history-pill'
+const GUARD_NAME = 'ChatInputGuardWrapper'
 
 /** Components already patched, shared across lifecycle calls. */
 const seen = new Set<unknown>()
 
+/** Input instances whose handler we already observe. */
+const wired = new WeakSet<object>()
+
 /** Input props we already wrapped onChangeText on, to avoid double wrapping. */
 const wrapped = new WeakSet<object>()
 
-/** Latest unwrapped onChangeText, used to push history back into the box. */
+/** Cleanup registry of the running lifecycle, used while rendering. */
+let register: Cleanup | undefined
+/** Latest input instance, the preferred writer for history. */
+let latestInstance: any
+/** Latest input props, used to resolve the live channel. */
+let latestInputProps: any
+/** Latest unwrapped onChangeText, used when no instance is reachable. */
 let latestApply: ((text: string) => void) | undefined
 /** Channel the latest render belongs to. */
 let latestChannel = ''
+/**
+ * Set once the guard wrapper render found a place for the pill, so the
+ * `ChatInput` fallback does not inject a second copy of it.
+ */
+let guardActive = false
+/** Set by the last `decorate` call when it found a place for the pill. */
+let injected = false
+
+/** `findInTree` only narrows for type guards, so wrap every search. */
+function findNode(tree: any, predicate: (node: any) => boolean): any {
+	return findInTree(tree, (node: any): node is Record<string, any> => {
+		try {
+			return predicate(node)
+		} catch {
+			return false
+		}
+	}) as any
+}
 
 function typeName(node: any): string {
 	const type = node?.type
@@ -55,15 +91,53 @@ function typeName(node: any): string {
 	return ''
 }
 
-function isTextInput(node: any): boolean {
+/**
+ * Structural match for the message box input. Minified builds drop
+ * `displayName`, so the shape of the props is what identifies it.
+ */
+function isInputNode(node: any): boolean {
 	if (!node || typeof node !== 'object') return false
-	if (typeof node.props?.onChangeText !== 'function') return false
+	const props = node.props
+	if (!props || typeof props !== 'object') return false
+	if (typeof props.onChangeText !== 'function') return false
 	const name = typeName(node)
-	return name === 'ChatInput' || name === 'TextInput'
+	return name !== 'View' && name !== 'RCTView' && name !== 'Text'
 }
 
-function isRowView(node: any): boolean {
-	return typeName(node) === 'View' || typeName(node) === 'RCTView'
+function isViewLike(node: any): boolean {
+	const name = typeName(node)
+	if (name === 'View' || name === 'RCTView') return true
+	const props = node?.props
+	if (!props || typeof props !== 'object') return false
+	return (
+		typeof props.onStartShouldSetResponder === 'function' ||
+		typeof props.onResponderGrant === 'function'
+	)
+}
+
+function refTarget(ref: any): any {
+	if (ref == null) return undefined
+	if (typeof ref === 'object' && 'current' in ref)
+		return ref.current ?? undefined
+	return ref
+}
+
+function channelFrom(...candidates: any[]): string | undefined {
+	for (const candidate of candidates) {
+		if (typeof candidate === 'string' && candidate) return candidate
+	}
+	return undefined
+}
+
+/** Channel of the box we last rendered, used while recording keystrokes. */
+function liveChannel(): string {
+	return channelFor(
+		channelFrom(
+			latestInputProps?.channelId,
+			latestInstance?.props?.channelId,
+			latestInstance?.props?.channel?.id,
+		),
+	)
 }
 
 interface Located {
@@ -91,13 +165,13 @@ function locate(node: any, ancestors: any[], depth = 0): Located | undefined {
 
 	if (typeof node !== 'object') return undefined
 
-	if (isTextInput(node)) {
+	if (isInputNode(node)) {
 		let row: any
 		let host: any
 		for (let i = ancestors.length - 1; i >= 0; i--) {
 			const ancestor = ancestors[i]
 			if (!row && Array.isArray(ancestor?.props?.children)) row = ancestor
-			if (!host && isRowView(ancestor)) host = ancestor
+			if (!host && isViewLike(ancestor)) host = ancestor
 		}
 		return { input: node, row, host: host ?? row }
 	}
@@ -111,72 +185,140 @@ function locate(node: any, ancestors: any[], depth = 0): Located | undefined {
 	return found
 }
 
-/** Injects the pill, wraps onChangeText and wires up the gestures. */
-function decorate(result: any): any {
+/** Row the pill goes into, resolved structurally when the input is hidden. */
+function findRow(result: any): any {
+	return (
+		findNode(result, node => {
+			const props = node?.props
+			return (
+				Array.isArray(props?.children) && node?.type?.displayName === 'View'
+			)
+		}) ??
+		findNode(
+			result,
+			node => Array.isArray(node?.props?.children) && isViewLike(node),
+		) ??
+		undefined
+	)
+}
+
+/** Injects the pill, observes typing and wires up the gestures. */
+function decorate(result: any, allowInject: boolean): any {
+	injected = false
 	try {
 		if (result == null || typeof result !== 'object') return result
 
-		const located = locate(result, [])
-		if (!located) return result
-
 		const settings = currentSettings()
-		const input = located.input
-		const ip = input.props
+		const located = locate(result, [])
+		const inputProps = located?.input?.props
+		if (inputProps) latestInputProps = inputProps
 
-		const explicit =
-			typeof ip.channelId === 'string' && ip.channelId
-				? ip.channelId
-				: undefined
-		const channelId = channelFor(explicit)
+		const instance =
+			refTarget(
+				findNode(result, node => node?.props?.chatInputRef != null)?.props
+					?.chatInputRef,
+			) ??
+			refTarget(inputProps?.ref) ??
+			refTarget(inputProps?.inputRef) ??
+			refTarget(inputProps?.textInputRef)
+		if (instance) latestInstance = instance
+
+		const channelId = channelFor(
+			channelFrom(
+				inputProps?.channelId,
+				instance?.props?.channelId,
+				instance?.props?.channel?.id,
+			),
+		)
 		latestChannel = channelId
 
-		seed(channelId, ip.value ?? ip.defaultValue)
+		seed(
+			channelId,
+			inputProps?.value ?? inputProps?.defaultValue ?? instance?.state?.text,
+		)
 
-		if (typeof ip.onChangeText === 'function' && !wrapped.has(ip)) {
-			wrapped.add(ip)
-			const original = ip.onChangeText as (text: string) => void
+		// Reading keystrokes through the instance handler survives minification.
+		if (instance && typeof instance === 'object' && !wired.has(instance)) {
+			wired.add(instance)
+			if (typeof instance.handleTextChanged === 'function') {
+				try {
+					const unpatch = beforeLoose(
+						instance,
+						'handleTextChanged',
+						(args: any[]) => {
+							try {
+								const text = args?.[0]
+								if (typeof text === 'string') record(liveChannel(), text)
+							} catch {}
+							// Valenced replaces the call arguments with the return value.
+							return args
+						},
+					)
+					register?.(unpatch)
+				} catch {}
+			}
+		}
+
+		if (
+			inputProps &&
+			typeof inputProps.onChangeText === 'function' &&
+			!wrapped.has(inputProps)
+		) {
+			wrapped.add(inputProps)
+			const original = inputProps.onChangeText as (text: string) => void
 			latestApply = original
-			ip.onChangeText = (text: string) => {
-				record(channelId, text)
+			inputProps.onChangeText = (text: string) => {
+				record(liveChannel(), text)
 				original(text)
 			}
 		}
 
 		setApplier(text => {
 			try {
+				const target = latestInstance
+				if (target && typeof target.handleTextChanged === 'function') {
+					target.handleTextChanged(text)
+					return
+				}
+			} catch {}
+			try {
 				latestApply?.(text)
 			} catch {}
 		})
 
-		const row = located.row
-		if (row && typeof row.props === 'object') {
-			try {
-				const children = row.props.children
-				const list = Array.isArray(children)
-					? children
-					: children != null
-						? [children]
-						: []
-				const rest = list.filter(
-					(child: any) => child?.type !== TypingHistoryPill,
-				)
-				row.props.children = settings.buttons
-					? [
-							createElement(TypingHistoryPill, {
-								key: PILL_KEY,
-								channelId,
-							}),
-							...rest,
-						]
-					: rest
-			} catch {}
-		}
+		if (allowInject) {
+			const row = located?.row ?? findRow(result)
+			if (row && typeof row.props === 'object') {
+				try {
+					const children = row.props.children
+					const list = Array.isArray(children)
+						? children
+						: children != null
+							? [children]
+							: []
+					const rest = list.filter(
+						(child: any) => child?.type !== TypingHistoryPill,
+					)
+					row.props.children = settings.buttons
+						? [
+								createElement(TypingHistoryPill, {
+									key: PILL_KEY,
+									channelId,
+								}),
+								...rest,
+							]
+						: rest
+				} catch {}
+			}
 
-		const host = located.host
-		if (settings.gestures && host && typeof host.props === 'object') {
-			try {
-				attachGestures(host.props)
-			} catch {}
+			const host = located?.host ?? row
+			if (settings.gestures && host && typeof host.props === 'object') {
+				try {
+					attachGestures(host.props)
+				} catch {}
+			}
+
+			if (row || host) injected = true
 		}
 
 		return result
@@ -188,10 +330,10 @@ function decorate(result: any): any {
 function install(
 	target: any,
 	ns: Record<string, AnyFunction>,
+	key: string,
 	cleanup: Cleanup,
 ) {
-	const name = 'ChatInput'
-	if (seen.has(target)) return
+	if (!target || seen.has(target)) return
 	seen.add(target)
 
 	// Class component: render() takes no props, the tree holds them.
@@ -204,34 +346,38 @@ function install(
 			afterLoose(
 				target.prototype as unknown as Record<string, AnyFunction>,
 				'render',
-				decorate,
+				result => decorate(result, !guardActive),
 			),
 		)
 		return
 	}
 
-	// Plain function component.
+	// Plain function component: patch it on whatever holds the reference.
 	if (typeof target === 'function') {
-		if (seen.has(ns)) return
-		seen.add(ns)
-		cleanup(afterLoose(ns, name, decorate))
+		cleanup(afterLoose(ns, key, result => decorate(result, !guardActive)))
 		return
 	}
 
-	// Memo or forwardRef wrapper.
+	// forwardRef wrapper.
 	if (target && typeof target === 'object') {
 		if (typeof target.render === 'function') {
 			cleanup(
 				afterLoose(
 					target as unknown as Record<string, AnyFunction>,
 					'render',
-					decorate,
+					result => decorate(result, !guardActive),
 				),
 			)
 			return
 		}
+		// memo wrapper: patch the inner type through the memo object.
 		if (target.type) {
-			install(target.type, target as Record<string, AnyFunction>, cleanup)
+			install(
+				target.type,
+				target as Record<string, AnyFunction>,
+				'type',
+				cleanup,
+			)
 		}
 	}
 }
@@ -242,8 +388,59 @@ function scan(namespace: unknown, cleanup: Cleanup) {
 		if (!ns || typeof ns !== 'object') return
 		const target = ns.ChatInput
 		if (!target) return
-		install(target, ns, cleanup)
+		install(target, ns, 'ChatInput', cleanup)
 	} catch {}
+}
+
+/**
+ * Patches the guard wrapper around the message box. This is the reliable
+ * entry point: its render result carries `chatInputRef`, which exposes the
+ * input instance regardless of how the inner components are minified.
+ */
+function scanGuard(namespace: unknown, cleanup: Cleanup) {
+	try {
+		const ns = namespace as Record<string, any> | null
+		if (!ns || typeof ns !== 'object') return
+
+		let key = 'default'
+		let target = ns.default
+		if (typeof target !== 'function') {
+			target = undefined
+			for (const candidate of Object.keys(ns)) {
+				const value = ns[candidate]
+				if (typeof value === 'function' && (value as any).name === GUARD_NAME) {
+					key = candidate
+					target = value
+					break
+				}
+			}
+		}
+		if (!target || seen.has(target)) return
+		seen.add(target)
+
+		cleanup(
+			afterLoose(ns, key, ret => {
+				const decorated = decorate(ret, true)
+				if (injected) guardActive = true
+				return decorated
+			}),
+		)
+	} catch {}
+}
+
+function bootstrap(cleanup: Cleanup, jsonStorage: any) {
+	register = cleanup
+	setSettingsGetter(() => ({
+		...DefaultSettings,
+		...(jsonStorage ?? {}),
+	}))
+	setGestureChannelGetter(() => latestChannel || channelFor())
+	cleanup(
+		getModules(withName(GUARD_NAME), ns => scanGuard(ns, cleanup), {
+			returnNamespace: true,
+		}),
+	)
+	cleanup(getModules(withProps('ChatInput'), ns => scan(ns, cleanup)))
 }
 
 export default plugin<{ jsonStorage: Settings }>({
@@ -252,28 +449,10 @@ export default plugin<{ jsonStorage: Settings }>({
 		default: DefaultSettings,
 	},
 	init({ cleanup, jsonStorage }) {
-		setSettingsGetter(() => ({
-			...DefaultSettings,
-			...(jsonStorage.cache ?? {}),
-		}))
-		setGestureChannelGetter(() => latestChannel || channelFor())
-		cleanup(
-			getModules(withProps('ChatInput'), ns => scan(ns, cleanup), {
-				returnNamespace: true,
-			}),
-		)
+		bootstrap(cleanup, jsonStorage.cache)
 	},
 	start({ cleanup, jsonStorage }) {
-		setSettingsGetter(() => ({
-			...DefaultSettings,
-			...(jsonStorage.cache ?? {}),
-		}))
-		setGestureChannelGetter(() => latestChannel || channelFor())
-		cleanup(
-			getModules(withProps('ChatInput'), ns => scan(ns, cleanup), {
-				returnNamespace: true,
-			}),
-		)
+		bootstrap(cleanup, jsonStorage.cache)
 	},
 	SettingsComponent,
 })

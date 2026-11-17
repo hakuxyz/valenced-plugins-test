@@ -174,11 +174,6 @@ function isCrownNode(node: any): boolean {
 	return false
 }
 
-function isImageNode(node: any): boolean {
-	const name = nodeTypeName(node)
-	return name === 'Image' || name === 'RCTImage' || name === 'ImageBackground'
-}
-
 function containsName(node: any, names: string[]): boolean {
 	if (typeof node === 'string')
 		return names.some(n => n.length > 0 && node.includes(n))
@@ -219,12 +214,33 @@ function flattenStyle(style: any, out: any[] = []): any[] {
 }
 
 function isRowContainer(slot: Slot): boolean {
-	for (const entry of flattenStyle(slot.owner?.props?.style)) {
+	return isRowOwner(slot.owner)
+}
+
+function isRowOwner(owner: Slot['owner']): boolean {
+	for (const entry of flattenStyle(owner?.props?.style)) {
 		if (entry && typeof entry === 'object' && 'flexDirection' in entry) {
 			return (entry as { flexDirection?: unknown }).flexDirection === 'row'
 		}
 	}
 	return false
+}
+
+/** Row containers in the tree, deepest first, used when no name was found. */
+function collectRows(node: any, owner: Slot['owner'], out: Slot[]): void {
+	if (Array.isArray(node)) {
+		for (const child of node) {
+			if (!child || typeof child !== 'object') continue
+			collectRows(child.props?.children, child, out)
+		}
+		if (owner && isRowOwner(owner)) {
+			out.push({ children: node, index: node.length - 1, owner })
+		}
+		return
+	}
+	if (node && typeof node === 'object') {
+		collectRows(node.props?.children, node, out)
+	}
 }
 
 function guildStore(): GuildStoreLike | undefined {
@@ -289,17 +305,12 @@ function decorate(result: any, props: RowProps | undefined): any {
 
 	const slots: Slot[] = []
 	collectSlots(result, null, names, slots)
+	// Fall back to the outermost row when the display name is not in the tree.
+	if (slots.length === 0) collectRows(result, null, slots)
 	if (slots.length === 0) return result
 
 	const deepest = slots[0]
 	const slot = slots.find(isRowContainer) ?? deepest
-
-	if (slot === deepest) {
-		const siblings = deepest.children.filter(
-			(_, i) => i !== deepest.index,
-		) as any[]
-		if (siblings.some(child => walk(child, isImageNode))) return result
-	}
 
 	slot.children.splice(
 		slot.index + 1,
@@ -315,73 +326,108 @@ function decorate(result: any, props: RowProps | undefined): any {
 	return result
 }
 
+/** Captures the props of a render call and decorates its element tree. */
+function patchWithPropsCapture(
+	parent: Record<string, AnyFunction>,
+	key: string,
+	cleanup: Cleanup,
+) {
+	let pending: RowProps | undefined
+	cleanup(
+		beforeLoose(parent, key, (args: any[]) => {
+			pending = args?.[0] as RowProps
+			// Valenced replaces the call arguments with the return value.
+			return args
+		}),
+	)
+	cleanup(
+		afterLoose(parent, key, (result: any) => {
+			const props = pending
+			pending = undefined
+			if (!props) return result
+			try {
+				return decorate(result, props)
+			} catch {
+				return result
+			}
+		}),
+	)
+}
+
+/**
+ * Attaches the crown hook to a component in whatever shape Discord wrapped it
+ * in: plain function, class, forwardRef or memo.
+ */
+function patchRenderable(
+	target: any,
+	parent: Record<string, AnyFunction>,
+	key: string,
+	cleanup: Cleanup,
+	seen: Set<unknown>,
+) {
+	if (!target || seen.has(target)) return
+	seen.add(target)
+
+	if (typeof target === 'function') {
+		// Class component: render() has no props argument, read them from the instance.
+		if (typeof target.prototype?.render === 'function') {
+			if (seen.has(target.prototype)) return
+			seen.add(target.prototype)
+			cleanup(
+				insteadLoose(
+					target.prototype as unknown as Record<string, AnyFunction>,
+					'render',
+					function (this: any, args: any[], original: AnyFunction) {
+						const result = original.apply(this, args)
+						try {
+							return decorate(result, this?.props as RowProps)
+						} catch {
+							return result
+						}
+					},
+				),
+			)
+			return
+		}
+		// Plain function component.
+		patchWithPropsCapture(parent, key, cleanup)
+		return
+	}
+
+	if (target && typeof target === 'object') {
+		// forwardRef wrapper.
+		if (typeof target.render === 'function') {
+			patchWithPropsCapture(
+				target as unknown as Record<string, AnyFunction>,
+				'render',
+				cleanup,
+			)
+			return
+		}
+		// memo wrapper: hook the inner type through the memo object.
+		if (target.type) {
+			patchRenderable(
+				target.type,
+				target as Record<string, AnyFunction>,
+				'type',
+				cleanup,
+				seen,
+			)
+		}
+	}
+}
+
 function installRowPatch(mod: unknown, cleanup: Cleanup, seen: Set<unknown>) {
 	const m = mod as Record<string, any> | null
 	const row = m?.GuildMemberRow
 	if (!row) return
-
-	const finish = (parent: Record<string, AnyFunction>, key: string) => {
-		if (seen.has(parent)) return
-		seen.add(parent)
-
-		let pending: RowProps | undefined
-		cleanup(
-			beforeLoose(parent, key, (args: any[]) => {
-				pending = args?.[0] as RowProps
-				return args
-			}),
-		)
-		cleanup(
-			afterLoose(parent, key, (result: any) => {
-				const props = pending
-				pending = undefined
-				if (!props) return result
-				try {
-					return decorate(result, props)
-				} catch {
-					return result
-				}
-			}),
-		)
-	}
-
-	// Class component: render() has no props argument, read them from the instance.
-	if (
-		typeof row === 'function' &&
-		typeof row.prototype?.render === 'function'
-	) {
-		if (seen.has(row.prototype)) return
-		seen.add(row.prototype)
-		cleanup(
-			insteadLoose(
-				row.prototype as Record<string, AnyFunction>,
-				'render',
-				function (this: any, args: any[], original: AnyFunction) {
-					const result = original.apply(this, args)
-					try {
-						return decorate(result, this?.props as RowProps)
-					} catch {
-						return result
-					}
-				},
-			),
-		)
-		return
-	}
-
-	if (typeof row === 'function') {
-		finish(m as Record<string, AnyFunction>, 'GuildMemberRow')
-		return
-	}
-
-	if (row && typeof row === 'object' && typeof row.type === 'function') {
-		finish(row as Record<string, AnyFunction>, 'type')
-		return
-	}
-
-	if (row && typeof row === 'object' && typeof row.render === 'function') {
-		finish(row as Record<string, AnyFunction>, 'render')
-	}
+	patchRenderable(
+		row,
+		m as Record<string, AnyFunction>,
+		'GuildMemberRow',
+		cleanup,
+		seen,
+	)
 }
 
 export default plugin({
@@ -389,15 +435,11 @@ export default plugin({
 		const seen = new Set<unknown>()
 
 		cleanup(
-			getModules(
-				withProps('GuildMemberRow'),
-				(mod: unknown) => {
-					try {
-						installRowPatch(mod, cleanup, seen)
-					} catch {}
-				},
-				{ returnNamespace: true },
-			),
+			getModules(withProps('GuildMemberRow'), (mod: unknown) => {
+				try {
+					installRowPatch(mod, cleanup, seen)
+				} catch {}
+			}),
 		)
 
 		cleanup(

@@ -30,6 +30,32 @@ function styleList(style: unknown): unknown[] {
 	return []
 }
 
+/**
+ * Structural match for the navigation stack holding the main and modal
+ * routes. Minified builds drop `type.name`, so the navigation state in the
+ * props is what identifies the element.
+ */
+function isNavStack(node: any): boolean {
+	if (!node || typeof node !== 'object') return false
+
+	const state = node.props?.state
+	if (state && typeof state === 'object') {
+		const names = state.routeNames
+		if (Array.isArray(names) && names.includes('main') && names.length >= 2) {
+			return true
+		}
+		if (Array.isArray(state.routes) && typeof state.index === 'number') {
+			return true
+		}
+	}
+
+	const type = node.type
+	return (
+		type?.name === 'NativeStackViewInner' ||
+		type?.displayName === 'NativeStackViewInner'
+	)
+}
+
 /** Whether this element is the app root view holding the navigation stack. */
 function isRootProps(props: any): boolean {
 	if (!props || typeof props !== 'object') return false
@@ -40,9 +66,13 @@ function isRootProps(props: any): boolean {
 	) {
 		return false
 	}
+
 	const children = props.children
 	const list = Array.isArray(children) ? children : [children]
-	return list.some((child: any) => child?.type?.name === 'NativeStackViewInner')
+	if (list.some(isNavStack)) return true
+
+	// The root view itself may carry the navigation state.
+	return isNavStack(props)
 }
 
 /** Injects the cat overlay and touch tracking into the root view props. */
@@ -79,13 +109,15 @@ function tryMount(result: any): any {
 	return result
 }
 
+/** Components already patched, shared across lifecycle calls. */
+const seen = new Set<unknown>()
+
 /** Patches a component so its rendered element passes through tryMount. */
 function patchComponent(
 	target: any,
 	parent: Record<string, AnyFunction>,
 	key: string,
 	cleanup: Cleanup,
-	seen: Set<unknown>,
 	depth: number,
 ) {
 	if (!target || depth > 3 || seen.has(target)) return
@@ -115,6 +147,7 @@ function patchComponent(
 					tryMount,
 				),
 			)
+			return
 		}
 		if (target.type) {
 			patchComponent(
@@ -122,44 +155,34 @@ function patchComponent(
 				target as Record<string, AnyFunction>,
 				'type',
 				cleanup,
-				seen,
 				depth + 1,
 			)
 		}
 	}
 }
 
-/** Components already patched, shared across lifecycle calls. */
-const seen = new Set<unknown>()
-
 function install(cleanup: Cleanup) {
 	const scan = (namespace: unknown) => {
 		try {
 			const ns = namespace as Record<string, unknown> | null
 			if (!ns || typeof ns !== 'object') return
+			const view = ns.View
+			if (!view) return
 			patchComponent(
-				ns.View,
+				view,
 				ns as unknown as Record<string, AnyFunction>,
 				'View',
 				cleanup,
-				seen,
 				0,
 			)
 		} catch {}
 	}
 
 	// Discord's common General view, which renders the app root.
-	cleanup(
-		getModules(withProps('Button', 'Text', 'View'), scan, {
-			returnNamespace: true,
-		}),
-	)
+	cleanup(getModules(withProps('Button', 'Text', 'View'), scan))
 	// React Native's own View export as a fallback.
-	cleanup(
-		getModules(withProps('View', 'Text', 'Image'), scan, {
-			returnNamespace: true,
-		}),
-	)
+	cleanup(getModules(withProps('View', 'Text', 'Image'), scan))
+	cleanup(getModules(withProps('View', 'Text', 'Image', 'ScrollView'), scan))
 }
 
 export default plugin<{ jsonStorage: Settings }>({
