@@ -44,17 +44,12 @@ const seen = new Set<unknown>()
 /** Input instances whose handler we already observe. */
 const wired = new WeakSet<object>()
 
-/** Input props we already wrapped onChangeText on, to avoid double wrapping. */
-const wrapped = new WeakSet<object>()
-
 /** Cleanup registry of the running lifecycle, used while rendering. */
 let register: Cleanup | undefined
 /** Latest input instance, the preferred writer for history. */
 let latestInstance: any
 /** Latest input props, used to resolve the live channel. */
 let latestInputProps: any
-/** Latest unwrapped onChangeText, used when no instance is reachable. */
-let latestApply: ((text: string) => void) | undefined
 /** Channel the latest render belongs to. */
 let latestChannel = ''
 /**
@@ -185,39 +180,38 @@ function locate(node: any, ancestors: any[], depth = 0): Located | undefined {
 	return found
 }
 
-/** Row the pill goes into, resolved structurally when the input is hidden. */
-function findRow(result: any): any {
-	return (
-		findNode(result, node => {
-			const props = node?.props
-			return (
-				Array.isArray(props?.children) && node?.type?.displayName === 'View'
-			)
-		}) ??
-		findNode(
-			result,
-			node => Array.isArray(node?.props?.children) && isViewLike(node),
-		) ??
-		undefined
-	)
-}
-
-/** Injects the pill, observes typing and wires up the gestures. */
+/**
+ * Injects the pill, observes typing and wires up the gestures.
+ *
+ * The tree is only touched when it can be proven to be the message box:
+ * either the input element itself or the `chatInputRef` holder must be
+ * present. Anything else is returned untouched, so a wrong module match
+ * can never break an unrelated screen.
+ */
 function decorate(result: any, allowInject: boolean): any {
 	injected = false
 	try {
 		if (result == null || typeof result !== 'object') return result
+		const isElement =
+			Array.isArray(result) ||
+			result.$$typeof != null ||
+			(result.props !== undefined && result.type !== undefined)
+		if (!isElement) return result
 
 		const settings = currentSettings()
 		const located = locate(result, [])
+		const refHolder = findNode(
+			result,
+			node => node?.props?.chatInputRef != null,
+		)
+		// Not the message box: never mutate or wire anything.
+		if (!located && !refHolder) return result
+
 		const inputProps = located?.input?.props
 		if (inputProps) latestInputProps = inputProps
 
 		const instance =
-			refTarget(
-				findNode(result, node => node?.props?.chatInputRef != null)?.props
-					?.chatInputRef,
-			) ??
+			refTarget(refHolder?.props?.chatInputRef) ??
 			refTarget(inputProps?.ref) ??
 			refTarget(inputProps?.inputRef) ??
 			refTarget(inputProps?.textInputRef)
@@ -265,35 +259,25 @@ function decorate(result: any, allowInject: boolean): any {
 			} catch {}
 		}
 
-		if (
-			inputProps &&
-			typeof inputProps.onChangeText === 'function' &&
-			!wrapped.has(inputProps)
-		) {
-			wrapped.add(inputProps)
-			const original = inputProps.onChangeText as (text: string) => void
-			latestApply = original
-			inputProps.onChangeText = (text: string) => {
-				record(liveChannel(), text)
-				original(text)
-			}
-		}
-
 		setApplier(text => {
 			try {
 				const target = latestInstance
 				if (target && typeof target.handleTextChanged === 'function') {
 					target.handleTextChanged(text)
-					return
 				}
-			} catch {}
-			try {
-				latestApply?.(text)
 			} catch {}
 		})
 
 		if (allowInject) {
-			const row = located?.row ?? findRow(result)
+			// Prefer the component root once `chatInputRef` proved this is the
+			// message box (the target the known plugins inject into), then the
+			// row that directly holds the input. Only array children are ever
+			// touched, and the pill is appended so existing `children[0]`
+			// consumers keep working.
+			const row =
+				refHolder && Array.isArray(result?.props?.children)
+					? result
+					: located?.row
 			if (row && typeof row.props === 'object') {
 				try {
 					const children = row.props.children
@@ -307,24 +291,23 @@ function decorate(result: any, allowInject: boolean): any {
 					)
 					row.props.children = settings.buttons
 						? [
+								...rest,
 								createElement(TypingHistoryPill, {
 									key: PILL_KEY,
 									channelId,
 								}),
-								...rest,
 							]
 						: rest
+					injected = true
 				} catch {}
 			}
 
-			const host = located?.host ?? row
+			const host = located?.host ?? (refHolder ? result : undefined)
 			if (settings.gestures && host && typeof host.props === 'object') {
 				try {
 					attachGestures(host.props)
 				} catch {}
 			}
-
-			if (row || host) injected = true
 		}
 
 		return result

@@ -75,6 +75,12 @@ export function attachGestures(props: any) {
 	let lastSingleStart = 0
 	/** Two finger start seen while we were not the responder. */
 	let pendingTwoFinger = 0
+	/**
+	 * Set only when our own capture handler claimed the responder for a two
+	 * finger touch. Single finger taps never set it, so the grant/release
+	 * handlers below stay completely inert for normal interaction.
+	 */
+	let claimed = false
 
 	const resolvePending = (now: number) => {
 		if (pendingTwoFinger === 0) return false
@@ -96,12 +102,16 @@ export function attachGestures(props: any) {
 		} catch {}
 
 		try {
-			if (!enabled()) return result
+			if (!enabled()) {
+				claimed = false
+				return result
+			}
 
 			const count = touchCount(event)
 			const now = Date.now()
 
 			if (count >= 2) {
+				claimed = true
 				active = true
 				startAt = now
 				lastSingleStart = 0
@@ -113,6 +123,9 @@ export function attachGestures(props: any) {
 				// responder events below fire for the rest of the gesture.
 				return true
 			}
+
+			// Only a two finger touch may leave a pending claim behind.
+			claimed = false
 
 			if (count === 1) {
 				// A rejected two finger claim: the next tap undoes instead.
@@ -145,7 +158,10 @@ export function attachGestures(props: any) {
 		} catch {}
 
 		try {
-			if (!enabled()) return result
+			if (!enabled()) {
+				claimed = false
+				return result
+			}
 
 			const count = touchCount(event)
 			const now = Date.now()
@@ -153,6 +169,7 @@ export function attachGestures(props: any) {
 			if (count >= 2 && !active) {
 				// We never became responder, remember the gesture so the
 				// next tap or move can still resolve it.
+				claimed = true
 				if (pendingTwoFinger === 0) pendingTwoFinger = now
 				return true
 			}
@@ -169,12 +186,23 @@ export function attachGestures(props: any) {
 		} catch {}
 
 		try {
-			if (!enabled()) return
-			active = true
-			startAt = Date.now()
-			const touch = firstTouch(event)
-			startX = touch?.pageX ?? 0
-			startY = touch?.pageY ?? 0
+			if (!enabled()) {
+				claimed = false
+				return
+			}
+			// Only a claim made by our own two finger capture activates the
+			// gesture. Grants that arrive for normal single finger taps (focus
+			// the input, press a button) must stay completely inert.
+			if (claimed) {
+				active = true
+				startAt = Date.now()
+				const touch = firstTouch(event)
+				startX = touch?.pageX ?? 0
+				startY = touch?.pageY ?? 0
+			} else {
+				active = false
+			}
+			claimed = false
 		} catch {}
 	}
 
@@ -216,7 +244,10 @@ export function attachGestures(props: any) {
 
 		try {
 			active = false
-			rejectedAt = Date.now()
+			// The grace undo only applies to our own rejected two finger
+			// claim, never to rejections of normal single finger taps.
+			if (claimed) rejectedAt = Date.now()
+			claimed = false
 		} catch {}
 	}
 
@@ -227,11 +258,13 @@ export function attachGestures(props: any) {
 
 		try {
 			active = false
+			claimed = false
 		} catch {}
 	}
 
 	function finish(event: any) {
 		active = false
+		claimed = false
 		const now = Date.now()
 		const duration = now - startAt
 
