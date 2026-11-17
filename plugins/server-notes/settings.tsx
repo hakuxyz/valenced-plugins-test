@@ -4,15 +4,12 @@ import { Design } from '@valenced/discord/design'
 import { Stores } from '@valenced/discord/flux'
 import { useEffect, useState } from 'react'
 import { Pressable, ScrollView, View } from 'react-native'
-import { openColorPicker } from './color-picker'
+import ColorPicker from './picker'
 import {
 	colorLabel,
 	colorToHex,
-	colorValueToNumber,
 	DefaultSettings,
 	DefaultTagColor,
-	hexToNumber,
-	normalizeHex,
 	PresetColorNames,
 	PresetColors,
 } from './shared'
@@ -122,38 +119,7 @@ function EditNote({
 }) {
 	const [note, setNoteText] = useState(initial?.note ?? '')
 	const [color, setColor] = useState(initial?.color ?? DefaultTagColor)
-	const [hexInput, setHexInput] = useState(
-		initial?.color?.startsWith('#') ? initial.color : '',
-	)
 	const name = guildName(guildId)
-
-	const applyHex = (value: string) => {
-		setHexInput(value)
-		const normalized = normalizeHex(value)
-		if (normalized) setColor(normalized)
-	}
-
-	const pickCustom = () => {
-		const currentNum = hexToNumber(
-			color.startsWith('#') ? color : colorToHex(color),
-		)
-		const opened = openColorPicker({
-			color: currentNum ?? undefined,
-			onSelect: value => {
-				const picked = colorValueToNumber(value)
-				if (picked == null) return
-				const hex = `#${picked.toString(16).padStart(6, '0')}`
-				setColor(hex)
-				setHexInput(hex)
-			},
-		})
-		if (!opened) {
-			ToastActionCreators.open('SERVER_NOTES_PICKER', {
-				text: 'Color picker not available. Enter a hex value instead.',
-				variant: 'critical',
-			})
-		}
-	}
 
 	return (
 		<TableRowGroup title={initial ? 'Edit server note' : 'Add server note'}>
@@ -187,32 +153,17 @@ function EditNote({
 					value={color}
 					onChange={c => {
 						setColor(c)
-						setHexInput('')
 					}}
 				/>
 
-				<View
-					style={{
-						flexDirection: 'row',
-						gap: 8,
-						marginTop: 8,
-						marginBottom: 4,
-					}}
-				>
-					<Button
-						text="Pick custom color"
-						variant="secondary"
-						onPress={pickCustom}
-					/>
+				<Text variant="text-sm/semibold" style={{ marginTop: 12 }}>
+					Custom color
+				</Text>
+				<View style={{ marginTop: 6, marginBottom: 4 }}>
+					<ColorPicker value={colorToHex(color)} onChange={setColor} />
 				</View>
 			</View>
 
-			<TextInput
-				label="Custom hex color"
-				placeholder="#5865f2"
-				value={hexInput}
-				onChange={applyHex}
-			/>
 			<TextInput
 				label="Note"
 				placeholder="Add a note for this server..."

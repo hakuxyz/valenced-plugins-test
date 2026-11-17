@@ -4,7 +4,7 @@
 	"name": "Server Notes",
 	"description": "Add notes and custom color tags to servers.",
 	"author": "hakuxyz (https://github.com/hakuxyz \"GitHub\")",
-	"version": "1.1.1",
+	"version": "1.2.0",
 	"icon": "PencilIcon",
 	"dependencies": {
 		"valenced.api": {

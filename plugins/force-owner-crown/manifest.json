@@ -1,0 +1,20 @@
+{
+	"format": 1,
+	"id": "hakuxyz.force-owner-crown",
+	"name": "Force Owner Crown",
+	"description": "Shows the owner crown next to usernames, even in large servers.",
+	"author": "hakuxyz (https://github.com/hakuxyz \"GitHub\")",
+	"version": "1.0.0",
+	"icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0OCIgaGVpZ2h0PSI0OCIgdmlld0JveD0iMCAwIDQ4IDQ4Ij48cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMCIgZmlsbD0iIzFmMjEzMSIvPjxwYXRoIGQ9Ik0xMSAzNCBMMTEgMTcgTDE4IDI0IEwyNCAxMyBMMzAgMjQgTDM3IDE3IEwzNyAzNCBaIiBmaWxsPSIjZjBiMjMyIi8+PHJlY3QgeD0iMTEiIHk9IjM0IiB3aWR0aD0iMjYiIGhlaWdodD0iNCIgcng9IjEuNSIgZmlsbD0iI2YwYjIzMiIvPjxjaXJjbGUgY3g9IjI0IiBjeT0iMjEiIHI9IjIiIGZpbGw9IiNmZmYzYzQiLz48L3N2Zz4=",
+	"dependencies": {
+		"valenced.api": {
+			"version": ">=1 <2"
+		},
+		"discord": {
+			"version": "*"
+		}
+	},
+	"dist": {
+		"script": "index.js"
+	}
+}

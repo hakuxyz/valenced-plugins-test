@@ -2,7 +2,6 @@ import { getStore } from '@valenced/discord/flux'
 import { getModules } from '@valenced/modules/finders'
 import { withName } from '@valenced/modules/finders/filters'
 import { after, instead } from '@valenced/patcher'
-import { setupColorPicker } from './color-picker'
 import SettingsComponent from './settings'
 import { DefaultSettings } from './shared'
 import { setPendingGuildId, setStorage } from './state'
@@ -94,7 +93,6 @@ export default plugin<{ jsonStorage: Settings }>({
 	},
 	start({ cleanup, jsonStorage, ...api }) {
 		setStorage(jsonStorage)
-		setupColorPicker(cleanup)
 
 		const openEditor = (guildId: string) => {
 			setPendingGuildId(guildId)
