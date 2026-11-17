@@ -109,8 +109,46 @@ function tryMount(result: any): any {
 	return result
 }
 
-/** Components already patched, shared across lifecycle calls. */
-const seen = new Set<unknown>()
+/** Parent/key pairs already hooked, so every module holding a view is patched. */
+const patched = new WeakMap<object, Set<string>>()
+
+function markPatched(parent: object, key: string): boolean {
+	let keys = patched.get(parent)
+	if (!keys) {
+		keys = new Set()
+		patched.set(parent, keys)
+	}
+	if (keys.has(key)) return false
+	keys.add(key)
+	return true
+}
+
+function unmarkPatched(parent: object, key: string) {
+	patched.get(parent)?.delete(key)
+}
+
+/** Patches once and unmarks again when the lifecycle cleans the patch up. */
+function register(
+	cleanup: Cleanup,
+	parent: object,
+	key: string,
+	patch: () => () => void,
+) {
+	if (!markPatched(parent, key)) return
+	let unpatch: () => void
+	try {
+		unpatch = patch()
+	} catch (error) {
+		unmarkPatched(parent, key)
+		throw error
+	}
+	cleanup(() => {
+		unmarkPatched(parent, key)
+		try {
+			unpatch()
+		} catch {}
+	})
+}
 
 /** Patches a component so its rendered element passes through tryMount. */
 function patchComponent(
@@ -120,32 +158,25 @@ function patchComponent(
 	cleanup: Cleanup,
 	depth: number,
 ) {
-	if (!target || depth > 3 || seen.has(target)) return
-	seen.add(target)
+	if (!target || depth > 3) return
 
 	if (typeof target === 'function') {
 		if (typeof target.prototype?.render === 'function') {
-			cleanup(
-				afterLoose(
-					target.prototype as unknown as Record<string, AnyFunction>,
-					'render',
-					tryMount,
-				),
+			const proto = target.prototype as unknown as Record<string, AnyFunction>
+			register(cleanup, proto, 'render', () =>
+				afterLoose(proto, 'render', tryMount),
 			)
 			return
 		}
-		cleanup(afterLoose(parent, key, tryMount))
+		register(cleanup, parent, key, () => afterLoose(parent, key, tryMount))
 		return
 	}
 
 	if (typeof target === 'object') {
 		if (typeof target.render === 'function') {
-			cleanup(
-				afterLoose(
-					target as unknown as Record<string, AnyFunction>,
-					'render',
-					tryMount,
-				),
+			const ref = target as unknown as Record<string, AnyFunction>
+			register(cleanup, ref, 'render', () =>
+				afterLoose(ref, 'render', tryMount),
 			)
 			return
 		}

@@ -238,25 +238,31 @@ function decorate(result: any, allowInject: boolean): any {
 		)
 
 		// Reading keystrokes through the instance handler survives minification.
-		if (instance && typeof instance === 'object' && !wired.has(instance)) {
-			wired.add(instance)
-			if (typeof instance.handleTextChanged === 'function') {
-				try {
-					const unpatch = beforeLoose(
-						instance,
-						'handleTextChanged',
-						(args: any[]) => {
-							try {
-								const text = args?.[0]
-								if (typeof text === 'string') record(liveChannel(), text)
-							} catch {}
-							// Valenced replaces the call arguments with the return value.
-							return args
-						},
-					)
-					register?.(unpatch)
-				} catch {}
-			}
+		if (
+			instance &&
+			typeof instance === 'object' &&
+			!wired.has(instance) &&
+			typeof instance.handleTextChanged === 'function'
+		) {
+			try {
+				const unpatch = beforeLoose(
+					instance,
+					'handleTextChanged',
+					(args: any[]) => {
+						try {
+							const text = args?.[0]
+							if (typeof text === 'string') record(liveChannel(), text)
+						} catch {}
+						// Valenced replaces the call arguments with the return value.
+						return args
+					},
+				)
+				wired.add(instance)
+				register?.(() => {
+					wired.delete(instance)
+					unpatch()
+				})
+			} catch {}
 		}
 
 		if (
@@ -342,36 +348,46 @@ function install(
 		typeof target.prototype?.render === 'function'
 	) {
 		seen.add(target.prototype)
-		cleanup(
-			afterLoose(
-				target.prototype as unknown as Record<string, AnyFunction>,
-				'render',
-				result => decorate(result, !guardActive),
-			),
+		const proto = target.prototype as unknown as Record<string, AnyFunction>
+		const unpatch = afterLoose(proto, 'render', result =>
+			decorate(result, !guardActive),
 		)
+		cleanup(() => {
+			unpatch()
+			seen.delete(target)
+			seen.delete(target.prototype)
+		})
 		return
 	}
 
 	// Plain function component: patch it on whatever holds the reference.
 	if (typeof target === 'function') {
-		cleanup(afterLoose(ns, key, result => decorate(result, !guardActive)))
+		const unpatch = afterLoose(ns, key, result =>
+			decorate(result, !guardActive),
+		)
+		cleanup(() => {
+			unpatch()
+			seen.delete(target)
+		})
 		return
 	}
 
 	// forwardRef wrapper.
 	if (target && typeof target === 'object') {
 		if (typeof target.render === 'function') {
-			cleanup(
-				afterLoose(
-					target as unknown as Record<string, AnyFunction>,
-					'render',
-					result => decorate(result, !guardActive),
-				),
+			const ref = target as unknown as Record<string, AnyFunction>
+			const unpatch = afterLoose(ref, 'render', result =>
+				decorate(result, !guardActive),
 			)
+			cleanup(() => {
+				unpatch()
+				seen.delete(target)
+			})
 			return
 		}
 		// memo wrapper: patch the inner type through the memo object.
 		if (target.type) {
+			seen.delete(target)
 			install(
 				target.type,
 				target as Record<string, AnyFunction>,
@@ -418,13 +434,16 @@ function scanGuard(namespace: unknown, cleanup: Cleanup) {
 		if (!target || seen.has(target)) return
 		seen.add(target)
 
-		cleanup(
-			afterLoose(ns, key, ret => {
-				const decorated = decorate(ret, true)
-				if (injected) guardActive = true
-				return decorated
-			}),
-		)
+		const unpatch = afterLoose(ns, key, ret => {
+			const decorated = decorate(ret, true)
+			if (injected) guardActive = true
+			return decorated
+		})
+		cleanup(() => {
+			unpatch()
+			seen.delete(target)
+			guardActive = false
+		})
 	} catch {}
 }
 
