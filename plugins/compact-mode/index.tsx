@@ -1,6 +1,6 @@
 import { Stores } from '@valenced/discord/flux'
 import { getModules } from '@valenced/modules/finders'
-import { withName } from '@valenced/modules/finders/filters'
+import { withName, withProps } from '@valenced/modules/finders/filters'
 import { after, before } from '@valenced/patcher'
 import SettingsComponent from './settings'
 import { DefaultSettings } from './shared'
@@ -26,8 +26,13 @@ const beforeLoose = before as unknown as LooseBefore
 const afterLoose = after as unknown as LooseAfter
 
 const REAL_IS_FIRST = 'vd_cm_realIsFirst'
+const PROFILE_TAP_ACTION = 'bindTapUsername'
 const BRAND_COLOR = 0x5865f2
 const SUPPORTED_TYPES = new Set([0, 19, 20])
+
+let showUserProfile:
+	| ((payload: { userId: string; guildId?: string }) => unknown)
+	| undefined
 
 interface AstNode {
 	type: string
@@ -223,8 +228,15 @@ function usernameLinkNode(
 	userId: unknown,
 	linkColor: number,
 	messageChannelId: unknown,
+	guildId: unknown,
 ): AstNode {
 	const id = typeof userId === 'string' ? userId : String(userId ?? '0')
+	const guild =
+		guildId == null
+			? undefined
+			: typeof guildId === 'string'
+				? guildId
+				: String(guildId)
 	return {
 		content: [
 			{
@@ -234,13 +246,14 @@ function usernameLinkNode(
 		],
 		type: 'link',
 		target: {
-			action: 'bindTapUsername',
+			action: PROFILE_TAP_ACTION,
 			userId: id,
 			linkColor,
 			messageChannelId:
 				typeof messageChannelId === 'string'
 					? messageChannelId
 					: String(messageChannelId ?? '0'),
+			guildId: guild && guild !== '0' ? guild : undefined,
 		},
 	}
 }
@@ -276,6 +289,7 @@ function usernameNode(out: any, raw: any): AstNode {
 			out?.channelId ??
 			out?.channel_id ??
 			'0',
+		raw?.guildId ?? raw?.guild_id ?? out?.guildId ?? out?.guild_id,
 	)
 }
 
@@ -360,6 +374,7 @@ function hideReplyAvatar(out: any, settings: Settings): void {
 			reference.message?.channelId ??
 			out?.channelId ??
 			'0',
+		reference.guildId ?? reference.guild_id ?? out?.guildId ?? out?.guild_id,
 	)
 
 	const parent = out.referencedMessage
@@ -424,6 +439,85 @@ function transform(result: any, data: RowData | undefined): any {
 }
 
 const patched = new Set<AnyFunction>()
+const patchedHandlers = new Set<AnyFunction>()
+
+function installProfileTap(exports: any, cleanup: Cleanup): void {
+	const Original = exports?.MessagesHandlers
+	if (typeof Original !== 'function' || patchedHandlers.has(Original)) return
+
+	try {
+		ensureWritable(exports, 'MessagesHandlers')
+		patchedHandlers.add(Original)
+
+		const Wrapped = function (this: any, ...args: any[]) {
+			const instance = Reflect.construct(Original, args, Wrapped)
+			const original = instance?.handleTapLink
+			if (typeof original === 'function') {
+				instance.handleTapLink = function (event: any, ...rest: any[]) {
+					const data = event?.nativeEvent?.data
+					const target = data?.node?.target ?? data?.target
+					const action = data?.action ?? target?.action
+					if (action === PROFILE_TAP_ACTION) {
+						const rawId = data?.userId ?? target?.userId ?? data?.node?.userId
+						const userId =
+							typeof rawId === 'string'
+								? rawId
+								: rawId == null
+									? ''
+									: String(rawId)
+						if (userId && /^\d+$/.test(userId) && userId !== '0') {
+							const rawGuild =
+								data?.guildId ?? target?.guildId ?? data?.node?.guildId
+							let guildId: string | undefined
+							if (rawGuild != null) {
+								const value =
+									typeof rawGuild === 'string' ? rawGuild : String(rawGuild)
+								if (value && value !== '0') guildId = value
+							}
+
+							try {
+								event?.preventDefault?.()
+							} catch {}
+							try {
+								event?.stopPropagation?.()
+							} catch {}
+							try {
+								showUserProfile?.({ userId, guildId })
+							} catch {}
+							return undefined
+						}
+					}
+					return original.call(this, event, ...rest)
+				}
+			}
+			return instance
+		} as AnyFunction
+
+		Wrapped.prototype = Original.prototype
+		try {
+			Object.setPrototypeOf(Wrapped, Original)
+		} catch {}
+		for (const key of Object.getOwnPropertyNames(Original)) {
+			if (key === 'length' || key === 'name' || key === 'prototype') continue
+			try {
+				;(Wrapped as any)[key] = Original[key]
+			} catch {}
+		}
+
+		exports.MessagesHandlers = Wrapped
+
+		cleanup(() => {
+			try {
+				if (exports.MessagesHandlers === Wrapped) {
+					exports.MessagesHandlers = Original
+				}
+			} catch {}
+			patchedHandlers.delete(Original)
+		})
+	} catch {
+		patchedHandlers.delete(Original)
+	}
+}
 
 function install(exports: any, cleanup: Cleanup): void {
 	const RowManager = resolveRowManager(exports)
@@ -478,6 +572,24 @@ export default plugin<{ jsonStorage: Settings }>({
 	start({ cleanup, jsonStorage }) {
 		setStorage(jsonStorage)
 
+		cleanup(
+			getModules(
+				withProps('showUserProfile'),
+				mod => {
+					if (typeof mod.showUserProfile === 'function') {
+						showUserProfile = mod.showUserProfile
+					}
+				},
+				{ max: 5 },
+			),
+		)
+		cleanup(
+			getModules(
+				withProps('MessagesHandlers'),
+				exports => installProfileTap(exports, cleanup),
+				{ max: 5 },
+			),
+		)
 		cleanup(
 			getModules(withName('RowManager'), exports => install(exports, cleanup), {
 				max: 5,
