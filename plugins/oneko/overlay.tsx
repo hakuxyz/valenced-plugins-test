@@ -2,30 +2,27 @@ import { useEffect, useRef, useState } from 'react'
 import { Animated, Image, StyleSheet, View } from 'react-native'
 import { SizeValues, SpeedMultipliers } from './shared'
 import {
-	CAT_IDLE_PNG,
-	CAT_SLEEP_PNG,
-	CAT_WALK1_PNG,
-	CAT_WALK2_PNG,
+	FRAME_SIZE,
+	ONEKO_SHEET_BASE64,
+	SHEET_HEIGHT,
+	SHEET_WIDTH,
+	SPRITE_SETS,
 } from './sprites'
 import { getSettings, touch } from './state'
+import type { SpriteName } from './sprites'
 
-const png = (data: string) => ({ uri: `data:image/png;base64,${data}` })
-
-const FRAMES = {
-	idle: png(CAT_IDLE_PNG),
-	walk1: png(CAT_WALK1_PNG),
-	walk2: png(CAT_WALK2_PNG),
-	sleep: png(CAT_SLEEP_PNG),
-}
-
-type FrameKey = keyof typeof FRAMES
+const sheet = { uri: `data:image/png;base64,${ONEKO_SHEET_BASE64}` }
 
 /** How long after the last touch the cat keeps chasing it. */
-const FOLLOW_WINDOW = 1500
-/** Idle time before the cat walks home and sleeps. */
-const SLEEP_DELAY = 20000
-/** Milliseconds per walk step at normal speed. */
-const STEP_INTERVAL = 150
+const FOLLOW_WINDOW = 2500
+/** Time without a touch before the cat can fall asleep (when enabled). */
+const SLEEP_DELAY = 12000
+
+type Sprite = readonly [number, number]
+
+function pick<T>(arr: readonly T[]): T {
+	return arr[Math.floor(Math.random() * arr.length)]
+}
 
 /**
  * Absolutely positioned cat that chases the last touch point.
@@ -34,39 +31,90 @@ const STEP_INTERVAL = 150
 export default function OnekoOverlay() {
 	const x = useRef(new Animated.Value(-240)).current
 	const y = useRef(new Animated.Value(-240)).current
-	const flip = useRef(new Animated.Value(1)).current
-	const pos = useRef({ x: -240, y: -240 })
+	const pos = useRef({ x: 32, y: 32 })
 	const area = useRef({ w: 0, h: 0 })
-	const prev = useRef(0)
-	const lastStep = useRef(0)
-	const toggled = useRef(false)
-	const raf = useRef(0)
-	const frameRef = useRef<FrameKey>('idle')
+
+	const frameCount = useRef(0)
+	const idleTime = useRef(0)
+	const idleAnimation = useRef<string | null>(null)
+	const idleAnimationFrame = useRef(0)
+	const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+	const spriteRef = useRef<Sprite>(SPRITE_SETS.idle[0])
 	const sizeRef = useRef(SizeValues.medium)
 	const enabledRef = useRef(true)
 
-	const [frame, setFrame] = useState<FrameKey>('idle')
+	const [sprite, setSpriteState] = useState<Sprite>(SPRITE_SETS.idle[0])
 	const [size, setSize] = useState(SizeValues.medium)
 	const [enabled, setEnabled] = useState(true)
 
 	useEffect(() => {
-		const setFrameKey = (next: FrameKey) => {
-			if (frameRef.current === next) return
-			frameRef.current = next
-			setFrame(next)
+		const setSprite = (name: SpriteName, frame: number) => {
+			const set = SPRITE_SETS[name] as readonly Sprite[]
+			const next = set[frame % set.length]
+			if (spriteRef.current[0] === next[0] && spriteRef.current[1] === next[1])
+				return
+			spriteRef.current = next
+			setSpriteState(next)
 		}
 
-		const step = (now: number) => {
-			raf.current = requestAnimationFrame(step)
+		const resetIdle = () => {
+			idleAnimation.current = null
+			idleAnimationFrame.current = 0
+		}
+
+		const idle = (canSleep: boolean) => {
+			idleTime.current += 1
+
+			if (
+				idleTime.current > 10 &&
+				Math.floor(Math.random() * 200) === 0 &&
+				idleAnimation.current == null
+			) {
+				const available: string[] = []
+				if (canSleep) available.push('sleeping')
+				available.push('scratchSelf')
+				if (pos.current.x < 32) available.push('scratchWallW')
+				if (pos.current.y < 32) available.push('scratchWallN')
+				if (area.current.w && pos.current.x > area.current.w - 32)
+					available.push('scratchWallE')
+				if (area.current.h && pos.current.y > area.current.h - 32)
+					available.push('scratchWallS')
+				idleAnimation.current = pick(available)
+			}
+
+			switch (idleAnimation.current) {
+				case 'sleeping':
+					if (idleAnimationFrame.current < 8) {
+						setSprite('tired', 0)
+						break
+					}
+					setSprite('sleeping', Math.floor(idleAnimationFrame.current / 4))
+					if (idleAnimationFrame.current > 192) resetIdle()
+					break
+				case 'scratchWallN':
+				case 'scratchWallS':
+				case 'scratchWallE':
+				case 'scratchWallW':
+				case 'scratchSelf':
+					setSprite(
+						idleAnimation.current as SpriteName,
+						idleAnimationFrame.current,
+					)
+					if (idleAnimationFrame.current > 9) resetIdle()
+					break
+				default:
+					setSprite('idle', 0)
+					return
+			}
+			idleAnimationFrame.current += 1
+		}
+
+		const tick = () => {
 			try {
 				const settings = getSettings()
-				const dt = prev.current
-					? Math.min(0.05, (now - prev.current) / 1000)
-					: 0.016
-				prev.current = now
-
 				const px = SizeValues[settings.size]
-				const speed = SpeedMultipliers[settings.speed]
+				const speed = 10 * SpeedMultipliers[settings.speed]
 
 				if (sizeRef.current !== px) {
 					sizeRef.current = px
@@ -78,64 +126,96 @@ export default function OnekoOverlay() {
 				}
 				if (!settings.enabled) return
 
+				frameCount.current += 1
+
 				const nowMs = Date.now()
-				const touched = touch.t > 0 && nowMs - touch.t < FOLLOW_WINDOW
-				const sleepy =
-					settings.sleep && touch.t > 0 && nowMs - touch.t > SLEEP_DELAY
+				const hasTouch = touch.t > 0
+				const recent = hasTouch && nowMs - touch.t < FOLLOW_WINDOW
+				const sleepyIdle =
+					settings.sleep && hasTouch && nowMs - touch.t > SLEEP_DELAY
 
-				let targetX = pos.current.x
-				let targetY = pos.current.y
-				if (touched) {
-					// Sit right above the touch point so the finger does not cover it.
-					targetX = touch.x - px / 2
-					targetY = touch.y - px
-				} else if (sleepy || touch.t === 0) {
-					targetX = 16
-					targetY = area.current.h ? area.current.h - px - 16 : 160
+				let mousePosX = pos.current.x
+				let mousePosY = pos.current.y
+				if (recent) {
+					mousePosX = touch.x
+					mousePosY = touch.y - px / 2
+				} else if (!hasTouch) {
+					mousePosX = 16
+					mousePosY = area.current.h ? area.current.h - 16 : 160
 				}
 
-				const dx = targetX - pos.current.x
-				const dy = targetY - pos.current.y
-				const dist = Math.sqrt(dx * dx + dy * dy)
+				const diffX = pos.current.x - mousePosX
+				const diffY = pos.current.y - mousePosY
+				const distance = Math.sqrt(diffX ** 2 + diffY ** 2)
 
-				if (dist > 2) {
-					const t = Math.min(1, dt * 7 * speed)
-					pos.current.x += dx * t
-					pos.current.y += dy * t
-					x.setValue(pos.current.x)
-					y.setValue(pos.current.y)
-					if (Math.abs(dx) > 0.5) flip.setValue(dx < 0 ? -1 : 1)
+				if (recent && distance < speed + 8) {
+					// Close to the touch point: stay alert/idle, don't jitter.
+					setSprite('idle', 0)
+					x.setValue(pos.current.x - px / 2)
+					y.setValue(pos.current.y - px / 2)
+					return
+				}
 
-					if (now - lastStep.current > STEP_INTERVAL / speed) {
-						lastStep.current = now
-						toggled.current = !toggled.current
-						setFrameKey(toggled.current ? 'walk1' : 'walk2')
+				if (!recent) {
+					if (sleepyIdle || !hasTouch) {
+						idle(settings.sleep)
+						x.setValue(pos.current.x - px / 2)
+						y.setValue(pos.current.y - px / 2)
+						return
 					}
-				} else if (sleepy && !touched) {
-					x.setValue(pos.current.x)
-					y.setValue(pos.current.y)
-					setFrameKey('sleep')
-				} else {
-					x.setValue(pos.current.x)
-					y.setValue(pos.current.y)
-					setFrameKey('idle')
+					// Brief pause after touch ended before idling.
+					idle(false)
+					x.setValue(pos.current.x - px / 2)
+					y.setValue(pos.current.y - px / 2)
+					return
 				}
+
+				idleAnimation.current = null
+				idleAnimationFrame.current = 0
+
+				if (idleTime.current > 1) {
+					setSprite('alert', 0)
+					idleTime.current = Math.min(idleTime.current, 7)
+					idleTime.current -= 1
+					return
+				}
+
+				let direction = ''
+				direction = diffY / distance > 0.5 ? 'N' : ''
+				direction += diffY / distance < -0.5 ? 'S' : ''
+				direction += diffX / distance > 0.5 ? 'W' : ''
+				direction += diffX / distance < -0.5 ? 'E' : ''
+				setSprite((direction || 'idle') as SpriteName, frameCount.current)
+
+				pos.current.x -= (diffX / distance) * speed
+				pos.current.y -= (diffY / distance) * speed
+
+				const w = area.current.w || 360
+				const h = area.current.h || 640
+				pos.current.x = Math.min(Math.max(px / 2, pos.current.x), w - px / 2)
+				pos.current.y = Math.min(Math.max(px / 2, pos.current.y), h - px / 2)
+
+				x.setValue(pos.current.x - px / 2)
+				y.setValue(pos.current.y - px / 2)
 			} catch {}
 		}
 
-		raf.current = requestAnimationFrame(step)
-		return () => cancelAnimationFrame(raf.current)
+		intervalRef.current = setInterval(tick, 100)
+		return () => {
+			if (intervalRef.current) clearInterval(intervalRef.current)
+		}
 	}, [])
 
 	if (!enabled) return null
 
 	const AnimatedView = Animated.View
+	const scale = size / FRAME_SIZE
+	const [gx, gy] = sprite
 
 	return (
 		<View
 			pointerEvents="none"
 			collapsable={false}
-			// Drawn above the screen content, matching the proven overlays.
 			style={[StyleSheet.absoluteFillObject, { zIndex: 9999 }]}
 			onLayout={e => {
 				area.current = {
@@ -153,16 +233,23 @@ export default function OnekoOverlay() {
 						width: size,
 						height: size,
 					},
-					{
-						transform: [{ translateX: x }, { translateY: y }, { scaleX: flip }],
-					},
+					{ transform: [{ translateX: x }, { translateY: y }] },
 				]}
 			>
-				<Image
-					source={FRAMES[frame]}
-					style={{ width: size, height: size }}
-					resizeMode="contain"
-				/>
+				<View style={{ width: size, height: size, overflow: 'hidden' }}>
+					<Image
+						source={sheet}
+						style={{
+							width: SHEET_WIDTH * scale,
+							height: SHEET_HEIGHT * scale,
+							transform: [
+								{ translateX: -gx * size },
+								{ translateY: -gy * size },
+							],
+						}}
+						resizeMode="stretch"
+					/>
+				</View>
 			</AnimatedView>
 		</View>
 	)
