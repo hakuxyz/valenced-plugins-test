@@ -26,7 +26,6 @@ const beforeLoose = before as unknown as LooseBefore
 const afterLoose = after as unknown as LooseAfter
 
 const REAL_IS_FIRST = 'vd_cm_realIsFirst'
-const MUTED_COLOR = 0x949ba4
 const BRAND_COLOR = 0x5865f2
 const SUPPORTED_TYPES = new Set([0, 19, 20])
 
@@ -156,21 +155,7 @@ function timestampText(raw: any, full: boolean): string {
 }
 
 function timestampNode(content: string): AstNode {
-	return {
-		content: [{ content, type: 'inlineCode' }],
-		type: 'link',
-		target: 'usernameOnClick',
-		context: {
-			username: 1,
-			usernameOnClick: {
-				action: '0',
-				userId: '0',
-				linkColor: MUTED_COLOR,
-				messageChannelId: '0',
-			},
-			medium: true,
-		},
-	}
+	return { content, type: 'inlineCode' }
 }
 
 function mentionNode(label: string, color: number): AstNode {
@@ -239,6 +224,7 @@ function usernameLinkNode(
 	linkColor: number,
 	messageChannelId: unknown,
 ): AstNode {
+	const id = typeof userId === 'string' ? userId : String(userId ?? '0')
 	return {
 		content: [
 			{
@@ -247,18 +233,14 @@ function usernameLinkNode(
 			},
 		],
 		type: 'link',
-		target: 'usernameOnClick',
-		context: {
-			username: true,
-			usernameOnClick: {
-				action: 'bindTapUsername',
-				userId: typeof userId === 'string' ? userId : String(userId ?? '0'),
-				linkColor,
-				messageChannelId:
-					typeof messageChannelId === 'string'
-						? messageChannelId
-						: String(messageChannelId ?? '0'),
-			},
+		target: {
+			action: 'bindTapUsername',
+			userId: id,
+			linkColor,
+			messageChannelId:
+				typeof messageChannelId === 'string'
+					? messageChannelId
+					: String(messageChannelId ?? '0'),
 		},
 	}
 }
