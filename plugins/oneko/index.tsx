@@ -97,9 +97,20 @@ function isNavStack(node: any): boolean {
 	if (
 		name === 'NativeStackViewInner' ||
 		name === 'App' ||
-		name === 'NavigationContainer'
+		name === 'NavigationContainer' ||
+		name === 'ScreenStack' ||
+		name === 'RNSScreenStack'
 	)
 		return true
+
+	if (typeof name === 'string') {
+		if (
+			name.includes('Navigator') ||
+			name.includes('NavigationContainer') ||
+			name.includes('ScreenStack')
+		)
+			return true
+	}
 
 	const state = node.props?.state
 	if (state && typeof state === 'object') {
@@ -108,6 +119,8 @@ function isNavStack(node: any): boolean {
 			if (names.includes('main') && names.includes('modal')) return true
 			if (names.includes('main') && names.length >= 2) return true
 		}
+		if (Array.isArray(state.routes) && typeof state.index === 'number')
+			return true
 	}
 
 	return false
@@ -128,8 +141,6 @@ function typeName(node: any): string {
 }
 
 function sampleFlex(props: any, list: any[]) {
-	if (flexSamples >= 6) return
-	flexSamples++
 	try {
 		const desc = list.map((child: any) => {
 			if (!child || typeof child !== 'object') return typeof child
@@ -146,9 +157,18 @@ function sampleFlex(props: any, list: any[]) {
 			}
 			return `${name}${st}`
 		})
-		console.log(
-			`[Oneko] flex sample children=${list.length} :: ${desc.join(' || ')}`,
-		)
+		const line = desc.join(' || ')
+		const interesting =
+			line.includes('App') ||
+			line.includes('Screen') ||
+			line.includes('Stack') ||
+			line.includes('Navigation') ||
+			line.includes('Navigator') ||
+			line.includes('ThemeContext')
+		if (flexSamples < 12 || (interesting && flexSamples < 30)) {
+			flexSamples++
+			console.log(`[Oneko] flex sample children=${list.length} :: ${line}`)
+		}
 	} catch {}
 }
 
