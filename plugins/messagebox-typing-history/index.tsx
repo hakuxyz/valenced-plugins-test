@@ -387,17 +387,46 @@ function applyText(text: string) {
 		} catch {}
 	}
 
+	const setNative = (target: any) => {
+		try {
+			const t = refTarget(target)
+			if (!t || typeof t !== 'object' || called.has(t)) return
+			if (typeof t.setNativeProps === 'function') {
+				called.add(t)
+				t.setNativeProps({ text })
+			}
+		} catch {}
+	}
+
 	// What the visible input is driven by: every handler of the subtree.
-	for (const el of latestInputs) call(el?.props ?? el, 'onChangeText')
+	for (const el of latestInputs) {
+		const props = el?.props ?? el
+		call(props, 'onChangeText')
+		setNative(props?.ref ?? el?.ref)
+	}
 
 	// The instance behind the ref, resolved only now.
 	const instance = resolveInstance()
 	call(instance, 'handleTextChanged')
 	call(instance?.props, 'onChangeText')
 
+	for (const ref of [
+		instance?._inputRef,
+		instance?.inputRef,
+		instance?._textInput,
+		instance?.textInputRef,
+		instance?.input,
+		instance?.props?.inputRef,
+		instance?.props?.textInputRef,
+		refTarget(refHolderRef),
+	]) {
+		setNative(ref)
+	}
+
 	// The module level handlers, which do not depend on any render.
 	call(chatHandler, 'handleTextChanged')
 	call(chatModule, 'changeText')
+	call(setterModule, 'setText')
 }
 
 /**
@@ -436,12 +465,24 @@ function diagnose(
 						: props?.defaultValue != null
 							? `d:${props.defaultValue}`
 							: '-'
-				const native = refTarget(props?.ref ?? el?.ref)
-				const hasNative =
-					native &&
-					(typeof native.clear === 'function' ||
-						typeof native.getNativeRef === 'function' ||
-						typeof native.setNativeProps === 'function')
+				const nativeCandidates = [
+					refTarget(props?.ref ?? el?.ref),
+					refTarget(instance?._inputRef),
+					refTarget(instance?.inputRef),
+					refTarget(instance?._textInput),
+					refTarget(instance?.textInputRef),
+					refTarget(instance?.input),
+					refTarget(instance?.props?.inputRef),
+					refTarget(instance?.props?.textInputRef),
+					refTarget(refHolderRef),
+				]
+				const hasNative = nativeCandidates.some(
+					native =>
+						native &&
+						(typeof native.clear === 'function' ||
+							typeof native.getNativeRef === 'function' ||
+							typeof native.setNativeProps === 'function'),
+				)
 				const flags = [
 					latestInputs.length > 0 ? 'p1' : 'p0',
 					instance && typeof instance.handleTextChanged === 'function'
@@ -756,7 +797,16 @@ function bootstrap(cleanup: Cleanup, storage: any) {
 			{ max: 1 },
 		),
 	)
-	// Diagnostics only: modules that can write into the box on some builds.
+	cleanup(
+		getModules(
+			withProps('changeText'),
+			module => {
+				chatModule ??= module
+			},
+			{ max: 3 },
+		),
+	)
+	// Diagnostics / alternate writers: modules that can write into the box.
 	cleanup(
 		getModules(
 			withProps('selectGIF', 'insertText'),
@@ -769,6 +819,15 @@ function bootstrap(cleanup: Cleanup, storage: any) {
 	cleanup(
 		getModules(
 			withProps('setText', 'clearText'),
+			module => {
+				setterModule ??= module
+			},
+			{ max: 3 },
+		),
+	)
+	cleanup(
+		getModules(
+			withProps('setText'),
 			module => {
 				setterModule ??= module
 			},
