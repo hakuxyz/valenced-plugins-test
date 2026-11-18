@@ -124,7 +124,7 @@ function history(channelId: string): History {
 	return h
 }
 
-function store(name: string): Record<string, any> | undefined {
+export function store(name: string): Record<string, any> | undefined {
 	try {
 		return (Stores as unknown as Record<string, Record<string, any>>)[name]
 	} catch {

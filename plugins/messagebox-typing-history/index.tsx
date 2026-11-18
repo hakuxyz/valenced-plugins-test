@@ -20,6 +20,7 @@ import {
 	setReporter,
 	setSettingsGetter,
 	settingsChanged,
+	store,
 } from './state'
 import type { AnyFunction } from '@valenced/utils/types'
 import type { Settings } from './shared'
@@ -459,12 +460,16 @@ function applyText(text: string) {
 
 	const channelId = liveChannel()
 	try {
-		if (draftModule && channelId) {
-			if (typeof draftModule.saveDraft === 'function') {
-				draftModule.saveDraft(channelId, text)
-			} else if (typeof draftModule.changeDraft === 'function') {
-				draftModule.changeDraft(channelId, text)
-			}
+		const stores = [draftModule, store('DraftStore')]
+		for (const ds of stores) {
+			if (!ds || !channelId) continue
+			try {
+				if (typeof ds.saveDraft === 'function') {
+					ds.saveDraft(channelId, text, 0)
+				} else if (typeof ds.changeDraft === 'function') {
+					ds.changeDraft(channelId, text, 0)
+				}
+			} catch {}
 		}
 	} catch {}
 }
