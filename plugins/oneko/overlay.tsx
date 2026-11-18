@@ -246,7 +246,7 @@ export default function OnekoOverlay() {
 		<View
 			pointerEvents="none"
 			collapsable={false}
-			style={[StyleSheet.absoluteFillObject, { zIndex: 9999 }]}
+			style={[StyleSheet.absoluteFillObject, { zIndex: 9999, elevation: 9999 }]}
 			onLayout={e => {
 				sharedArea.w = e.nativeEvent.layout.width
 				sharedArea.h = e.nativeEvent.layout.height
