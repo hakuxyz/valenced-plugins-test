@@ -220,16 +220,48 @@ function displayName(out: any, raw: any): string {
 	return String(name ?? '')
 }
 
-function usernameNode(out: any, raw: any): AstNode {
-	const color = toColorInt(out?.colorString, out?.usernameColor ?? BRAND_COLOR)
+function usernameLinkNode(
+	name: string,
+	userId: unknown,
+	linkColor: number,
+	messageChannelId: unknown,
+): AstNode {
 	return {
-		content: [{ content: displayName(out, raw), type: 'text' }],
-		type: 'mention',
-		userId: raw?.authorId ?? raw?.author?.id ?? out?.author?.id,
-		color,
-		roleColor: color,
-		colorString: hexColor(color),
+		content: [
+			{
+				content: [{ content: name, type: 'text' }],
+				type: 'strong',
+			},
+		],
+		type: 'link',
+		target: 'usernameOnClick',
+		context: {
+			username: true,
+			usernameOnClick: {
+				action: 'bindTapUsername',
+				userId: typeof userId === 'string' ? userId : String(userId ?? '0'),
+				linkColor,
+				messageChannelId:
+					typeof messageChannelId === 'string'
+						? messageChannelId
+						: String(messageChannelId ?? '0'),
+			},
+		},
 	}
+}
+
+function usernameNode(out: any, raw: any): AstNode {
+	const userId = raw?.author?.id ?? raw?.authorId ?? out?.author?.id
+	const linkColor = toColorInt(
+		out?.colorString ?? raw?.colorString,
+		out?.usernameColor ?? raw?.usernameColor ?? BRAND_COLOR,
+	)
+	return usernameLinkNode(
+		displayName(out, raw),
+		userId,
+		linkColor,
+		raw?.channelId ?? out?.channelId ?? out?.channel_id ?? '0',
+	)
 }
 
 function iconRoleNodes(raw: any, settings: Settings): AstNode[] {
@@ -305,14 +337,15 @@ function hideReplyAvatar(out: any, settings: Settings): void {
 	if (!name) return
 
 	const color = toColorInt(reference.colorString, reference.usernameColor)
-	const nameNode: AstNode = {
-		content: [{ content: name, type: 'text' }],
-		type: 'mention',
-		userId: reference.authorId ?? reference.author?.id ?? reference.userId,
+	const nameNode = usernameLinkNode(
+		name,
+		reference.authorId ?? reference.author?.id ?? reference.userId,
 		color,
-		roleColor: color,
-		colorString: hexColor(color),
-	}
+		reference.channelId ??
+			reference.message?.channelId ??
+			out?.channelId ??
+			'0',
+	)
 
 	const parent = out.referencedMessage
 	if (parent.systemContent) {
