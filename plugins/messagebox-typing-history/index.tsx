@@ -363,8 +363,20 @@ function collectInputs(node: any, out: any[], depth = 0) {
 	if (typeof node !== 'object') return
 	const props = node.props
 	if (!props || typeof props !== 'object') return
-	if (isInputNode(node) || typeof props.onChangeText === 'function')
-		out.push(node)
+	const name = typeName(node)
+	const looksLikeInput =
+		name === 'TextInput' ||
+		name.startsWith('TextInput') ||
+		typeof props.onChangeText === 'function' ||
+		((typeof props.value === 'string' ||
+			typeof props.defaultValue === 'string') &&
+			('onSelectionChange' in props ||
+				'multiline' in props ||
+				'placeholder' in props ||
+				'onSubmitEditing' in props ||
+				'editable' in props)) ||
+		('text' in props && typeof props.onChange === 'function')
+	if (looksLikeInput && name !== 'View' && name !== 'RCTView') out.push(node)
 	if (props.children != null) collectInputs(props.children, out, depth + 1)
 }
 
@@ -560,11 +572,21 @@ function decorate(result: any, allowInject: boolean): any {
 		// whole result: the real input may sit outside the located branch.
 		if (inputs.length === 0 && refHolder) pushInputs(refHolder)
 		if (inputs.length === 0) {
-			const found = findNode(
-				result,
-				node =>
-					isInputNode(node) || typeof node?.props?.onChangeText === 'function',
-			)
+			const found = findNode(result, node => {
+				const props = node?.props
+				if (!props || typeof props !== 'object') return false
+				if (typeof props.onChangeText === 'function') return true
+				const name = typeName(node)
+				if (name === 'TextInput' || name.startsWith('TextInput')) return true
+				return (
+					(typeof props.value === 'string' ||
+						typeof props.defaultValue === 'string') &&
+					('onSelectionChange' in props ||
+						'multiline' in props ||
+						'placeholder' in props ||
+						'onSubmitEditing' in props)
+				)
+			})
 			if (found) pushInputs(found)
 		}
 		if (inputs.length === 0) pushInputs(result)
