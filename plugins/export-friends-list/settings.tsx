@@ -3,7 +3,8 @@ import { ToastActionCreators } from '@valenced/discord/actions'
 import { Design } from '@valenced/discord/design'
 import { Stores } from '@valenced/discord/flux'
 import { Clipboard } from '@valenced/externals/react-native-clipboard'
-import { View } from 'react-native'
+import { useEffect, useReducer } from 'react'
+import { ScrollView, View } from 'react-native'
 import type { PluginSettingsComponent } from '@valenced/plugins/types'
 import type { ComponentProps } from 'react'
 
@@ -13,10 +14,13 @@ type Props = ComponentProps<PluginSettingsComponent<Record<string, never>>>
 
 interface RelationshipStoreLike {
 	getRelationships?: () => Record<string, number> | Map<string, number>
+	getFriendIDs?: () => string[]
+	getBlockedIDs?: () => string[]
+	addChangeListener?: (listener: () => void) => void
+	removeChangeListener?: (listener: () => void) => void
 }
 
 interface UserLike {
-	id?: string
 	username?: string
 	discriminator?: string
 }
@@ -44,12 +48,12 @@ function getUserStore(): UserStoreLike | undefined {
 		| undefined
 }
 
+// falls back to the raw id when the user isn't in the cache yet
 function getUsername(id: string, userStore: UserStoreLike | undefined): string {
 	const user = userStore?.getUser?.(id)
-	if (!user) return id
+	if (!user?.username) return id
 
-	const username = user.username ?? id
-	const discriminator = user.discriminator
+	const { username, discriminator } = user
 	if (discriminator && discriminator !== '0') {
 		return `${username}#${discriminator}`
 	}
@@ -59,7 +63,6 @@ function getUsername(id: string, userStore: UserStoreLike | undefined): string {
 function getContacts(): ContactList {
 	const relStore = getRelationshipStore()
 	const userStore = getUserStore()
-	const rels = relStore?.getRelationships?.()
 
 	const contactList: ContactList = {
 		friendsAdded: [],
@@ -86,10 +89,27 @@ function getContacts(): ContactList {
 		}
 	}
 
+	let rels: ReturnType<NonNullable<RelationshipStoreLike['getRelationships']>>
+	try {
+		rels = relStore?.getRelationships?.()
+	} catch {
+		rels = undefined
+	}
+
 	if (rels instanceof Map) {
 		for (const [id, type] of rels.entries()) add(String(id), Number(type))
 	} else if (rels && typeof rels === 'object') {
 		for (const [id, type] of Object.entries(rels)) add(id, Number(type))
+	}
+
+	// some builds don't expose getRelationships, the id getters still work
+	const nothingFound =
+		!contactList.friendsAdded.length && !contactList.blockedUsers.length
+	if (nothingFound) {
+		try {
+			for (const id of relStore?.getFriendIDs?.() ?? []) add(id, 1)
+			for (const id of relStore?.getBlockedIDs?.() ?? []) add(id, 2)
+		} catch {}
 	}
 
 	const byName = (a: string, b: string) =>
@@ -102,7 +122,7 @@ function getContacts(): ContactList {
 	return contactList
 }
 
-function toast(text: string, variant: 'default' | 'critical' = 'default') {
+function toast(text: string, variant: 'success' | 'critical' = 'success') {
 	try {
 		ToastActionCreators.open(
 			`HAKUXYZ_EXPORT_FRIENDS_${Date.now()}_${Math.random()}`,
@@ -121,6 +141,17 @@ function copyText(label: string, text: string) {
 }
 
 export default function SettingsComponent(_props: Props) {
+	const [, refresh] = useReducer((n: number) => n + 1, 0)
+
+	// relationships load after startup, so re-read whenever the store changes
+	useEffect(() => {
+		const store = getRelationshipStore()
+		store?.addChangeListener?.(refresh)
+		return () => {
+			store?.removeChangeListener?.(refresh)
+		}
+	}, [])
+
 	const contactList = getContacts()
 	const total =
 		contactList.friendsAdded.length +
@@ -129,85 +160,100 @@ export default function SettingsComponent(_props: Props) {
 		contactList.outgoingFriendRequests.length
 
 	const copyContactsJson = () => {
-		copyText('Contacts', JSON.stringify(contactList))
+		if (total === 0) {
+			toast('Nothing to export yet.', 'critical')
+			return
+		}
+		copyText('Contacts', JSON.stringify(contactList, null, 2))
 	}
 
 	const copyList = (label: string, list: string[]) => {
+		if (list.length === 0) {
+			toast(`${label} is empty.`, 'critical')
+			return
+		}
 		copyText(label, list.join('\n'))
 	}
 
 	return (
-		<Page>
-			<View style={{ gap: 12, paddingBottom: 24 }}>
-				<TableRowGroup title="Export">
-					<TableRow
-						label="Copy contacts (JSON)"
-						subLabel={`${total} total entries`}
-						onPress={copyContactsJson}
-						arrow
-					/>
-					<TableRow
-						label="Copy friends list"
-						subLabel={`${contactList.friendsAdded.length} friends`}
-						onPress={() => copyList('Friends list', contactList.friendsAdded)}
-						arrow
-					/>
-					<TableRow
-						label="Copy blocked users"
-						subLabel={`${contactList.blockedUsers.length} blocked`}
-						onPress={() => copyList('Blocked users', contactList.blockedUsers)}
-						arrow
-					/>
-					<TableRow
-						label="Copy incoming friend requests"
-						subLabel={`${contactList.incomingFriendRequests.length} incoming`}
-						onPress={() =>
-							copyList(
-								'Incoming friend requests',
-								contactList.incomingFriendRequests,
-							)
-						}
-						arrow
-					/>
-					<TableRow
-						label="Copy outgoing friend requests"
-						subLabel={`${contactList.outgoingFriendRequests.length} outgoing`}
-						onPress={() =>
-							copyList(
-								'Outgoing friend requests',
-								contactList.outgoingFriendRequests,
-							)
-						}
-						arrow
-					/>
-				</TableRowGroup>
+		<ScrollView keyboardShouldPersistTaps="handled">
+			<Page>
+				<View style={{ gap: 12, paddingBottom: 24 }}>
+					<TableRowGroup title="Export">
+						<TableRow
+							label="Copy contacts (JSON)"
+							subLabel={`${total} total entries`}
+							onPress={copyContactsJson}
+							arrow
+						/>
+						<TableRow
+							label="Copy friends list"
+							subLabel={`${contactList.friendsAdded.length} friends`}
+							onPress={() => copyList('Friends list', contactList.friendsAdded)}
+							arrow
+						/>
+						<TableRow
+							label="Copy blocked users"
+							subLabel={`${contactList.blockedUsers.length} blocked`}
+							onPress={() =>
+								copyList('Blocked users', contactList.blockedUsers)
+							}
+							arrow
+						/>
+						<TableRow
+							label="Copy incoming friend requests"
+							subLabel={`${contactList.incomingFriendRequests.length} incoming`}
+							onPress={() =>
+								copyList(
+									'Incoming friend requests',
+									contactList.incomingFriendRequests,
+								)
+							}
+							arrow
+						/>
+						<TableRow
+							label="Copy outgoing friend requests"
+							subLabel={`${contactList.outgoingFriendRequests.length} outgoing`}
+							onPress={() =>
+								copyList(
+									'Outgoing friend requests',
+									contactList.outgoingFriendRequests,
+								)
+							}
+							arrow
+						/>
+					</TableRowGroup>
 
-				<TableRowGroup title="Info">
-					<View style={{ paddingHorizontal: 16, paddingVertical: 12, gap: 6 }}>
-						<Text variant="text-sm/normal">
-							Friends: {contactList.friendsAdded.length}
-						</Text>
-						<Text variant="text-sm/normal">
-							Blocked: {contactList.blockedUsers.length}
-						</Text>
-						<Text variant="text-sm/normal">
-							Incoming requests: {contactList.incomingFriendRequests.length}
-						</Text>
-						<Text variant="text-sm/normal">
-							Outgoing requests: {contactList.outgoingFriendRequests.length}
-						</Text>
-						<Text
-							variant="text-xs/normal"
-							style={{ opacity: 0.7, marginTop: 4 }}
+					<TableRowGroup title="Info">
+						<View
+							style={{ paddingHorizontal: 16, paddingVertical: 12, gap: 6 }}
 						>
-							Exports relationship data from the currently loaded stores to your
-							clipboard. The JSON export uses the same format as Equicord
-							(friendsAdded, blockedUsers, incomingFriendRequests,
-							outgoingFriendRequests).
-						</Text>
-					</View>
-				</TableRowGroup>
-			</View>
-		</Page>
+							<Text variant="text-sm/normal">
+								Friends: {contactList.friendsAdded.length}
+							</Text>
+							<Text variant="text-sm/normal">
+								Blocked: {contactList.blockedUsers.length}
+							</Text>
+							<Text variant="text-sm/normal">
+								Incoming requests: {contactList.incomingFriendRequests.length}
+							</Text>
+							<Text variant="text-sm/normal">
+								Outgoing requests: {contactList.outgoingFriendRequests.length}
+							</Text>
+							<Text
+								variant="text-xs/normal"
+								style={{ opacity: 0.7, marginTop: 4 }}
+							>
+								Exports relationship data from the currently loaded stores to
+								your clipboard. The JSON export uses the same format as Equicord
+								(friendsAdded, blockedUsers, incomingFriendRequests,
+								outgoingFriendRequests). Users Discord hasn't loaded yet show up
+								as plain IDs.
+							</Text>
+						</View>
+					</TableRowGroup>
+				</View>
+			</Page>
+		</ScrollView>
 	)
 }
