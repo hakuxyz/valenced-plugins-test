@@ -97,27 +97,16 @@ function isNavStack(node: any): boolean {
 	if (
 		name === 'NativeStackViewInner' ||
 		name === 'App' ||
-		name === 'NavigationContainer' ||
-		name === 'NativeStackNavigator' ||
-		name === 'StackNavigator'
+		name === 'NavigationContainer'
 	)
 		return true
-
-	if (typeof name === 'string') {
-		if (name.includes('NavigationContainer')) return true
-		if (name.includes('Navigator')) return true
-		if (name.endsWith('StackNavigator')) return true
-	}
 
 	const state = node.props?.state
 	if (state && typeof state === 'object') {
 		const names = state.routeNames
 		if (Array.isArray(names)) {
 			if (names.includes('main') && names.includes('modal')) return true
-			if (names.includes('main') && names.length >= 2) return true
 		}
-		if (Array.isArray(state.routes) && typeof state.index === 'number')
-			return true
 	}
 
 	return false
