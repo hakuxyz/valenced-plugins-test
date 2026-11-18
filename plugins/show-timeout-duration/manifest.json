@@ -1,0 +1,20 @@
+{
+	"format": 1,
+	"id": "hakuxyz.show-timeout-duration",
+	"name": "Show Timeout Duration",
+	"description": "Show how much longer a member's timeout lasts in chat.",
+	"author": "hakuxyz (https://github.com/hakuxyz \"GitHub\")",
+	"version": "1.0.0",
+	"icon": "TimerIcon",
+	"dependencies": {
+		"valenced.api": {
+			"version": ">=1 <2"
+		},
+		"discord": {
+			"version": "*"
+		}
+	},
+	"dist": {
+		"script": "index.js"
+	}
+}
