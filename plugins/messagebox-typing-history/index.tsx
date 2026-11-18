@@ -71,6 +71,8 @@ let latestInputProps: any
  * history is applied instead of during whichever render happened to see it.
  */
 let refHolderRef: any
+/** Callback ref seen for the chat input, captured when invoked. */
+let callbackRefSeen = false
 /** Chat input module, used as a writer when the tree does not reach one. */
 let chatModule: any
 /** Module that owns `handleTextChanged`, observed and used as a writer. */
@@ -453,6 +455,7 @@ function applyText(text: string) {
 	call(chatHandler, 'handleTextChanged')
 	call(chatModule, 'changeText')
 	call(setterModule, 'setText')
+	call(insertModule, 'insertText')
 
 	const channelId = liveChannel()
 	try {
@@ -531,6 +534,7 @@ function diagnose(
 					setterModule ? 't1' : 't0',
 					hasNative ? 'r1' : 'r0',
 					draftModule ? 'g1' : 'g0',
+					callbackRefSeen ? 'c1' : 'c0',
 				].join('')
 				const want = expected === undefined ? '-' : clip(expected)
 				ToastActionCreators.open('HAKUXYZ_TYPING_HISTORY_DIAG', {
@@ -624,6 +628,32 @@ function decorate(result: any, allowInject: boolean): any {
 			if (ref && typeof ref === 'object' && 'current' in ref) {
 				refHolderRef = ref
 				break
+			}
+			if (typeof ref === 'function' && !(ref as any)[WRAPPED]) {
+				callbackRefSeen = true
+				const original = ref as AnyFunction
+				const wrapper = function (this: any, value: any) {
+					try {
+						if (value && typeof value === 'object') {
+							latestInstance = value
+							wireInstance(value)
+						}
+					} catch {}
+					return original.call(this, value)
+				}
+				;(wrapper as any)[WRAPPED] = true
+				try {
+					// Replace where we can reach it.
+					if (refHolder?.props?.chatInputRef === ref)
+						refHolder.props.chatInputRef = wrapper
+					else if (inputProps?.chatInputRef === ref)
+						inputProps.chatInputRef = wrapper
+					else if (inputProps?.inputRef === ref) inputProps.inputRef = wrapper
+					else if (inputProps?.textInputRef === ref)
+						inputProps.textInputRef = wrapper
+					else if (inputProps?.ref === ref) inputProps.ref = wrapper
+					else if (inputEl?.ref === ref) inputEl.ref = wrapper
+				} catch {}
 			}
 		}
 
@@ -862,6 +892,15 @@ function bootstrap(cleanup: Cleanup, storage: any) {
 				insertModule ??= module
 			},
 			{ max: 1 },
+		),
+	)
+	cleanup(
+		getModules(
+			withProps('insertText'),
+			module => {
+				insertModule ??= module
+			},
+			{ max: 3 },
 		),
 	)
 	cleanup(
