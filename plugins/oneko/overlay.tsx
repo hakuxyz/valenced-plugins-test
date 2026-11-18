@@ -1,4 +1,16 @@
 import { useEffect, useRef, useState } from 'react'
+
+let activeOverlay: symbol | null = null
+
+function claim(id: symbol): boolean {
+	activeOverlay ??= id
+	return activeOverlay === id
+}
+
+function release(id: symbol) {
+	if (activeOverlay === id) activeOverlay = null
+}
+
 import { Animated, Image, StyleSheet, View } from 'react-native'
 import { SizeValues, SpeedMultipliers } from './shared'
 import {
@@ -29,6 +41,9 @@ function pick<T>(arr: readonly T[]): T {
  * Rendered inside the app root view by the plugin's view patch.
  */
 export default function OnekoOverlay() {
+	const id = useRef(Symbol('oneko')).current
+	const [active, setActive] = useState(() => claim(id))
+
 	const x = useRef(new Animated.Value(-240)).current
 	const y = useRef(new Animated.Value(-240)).current
 	const pos = useRef({ x: 32, y: 32 })
@@ -49,6 +64,17 @@ export default function OnekoOverlay() {
 	const [enabled, setEnabled] = useState(true)
 
 	useEffect(() => {
+		if (!active) {
+			// Another overlay became active first; try to claim if it released.
+			const timer = setInterval(() => {
+				if (claim(id)) setActive(true)
+			}, 500)
+			return () => {
+				clearInterval(timer)
+				release(id)
+			}
+		}
+
 		const setSprite = (name: SpriteName, frame: number) => {
 			const set = SPRITE_SETS[name] as readonly Sprite[]
 			const next = set[frame % set.length]
@@ -203,10 +229,11 @@ export default function OnekoOverlay() {
 		intervalRef.current = setInterval(tick, 100)
 		return () => {
 			if (intervalRef.current) clearInterval(intervalRef.current)
+			release(id)
 		}
-	}, [])
+	}, [active])
 
-	if (!enabled) return null
+	if (!active || !enabled) return null
 
 	const AnimatedView = Animated.View
 	const scale = size / FRAME_SIZE
