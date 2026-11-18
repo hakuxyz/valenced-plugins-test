@@ -4,6 +4,7 @@ import { withName, withProps } from '@valenced/modules/finders/filters'
 import { after, before } from '@valenced/patcher'
 import { findInTree } from '@valenced/utils/tree'
 import { createElement } from 'react'
+import { TextInput } from 'react-native'
 import { attachGestures, setGestureChannelGetter } from './gestures'
 import TypingHistoryPill from './pill'
 import SettingsComponent from './settings'
@@ -74,7 +75,11 @@ let refHolderRef: any
 let chatModule: any
 /** Module that owns `handleTextChanged`, observed and used as a writer. */
 let chatHandler: any
-/** Every input props object in the message box subtree, all of them live. */
+/** Module that inserts text into the box, found for the diagnostics only. */
+let insertModule: any
+/** Module that sets or clears the box text, found for the diagnostics only. */
+let setterModule: any
+/** Every input element in the message box subtree, all of them live. */
 let latestInputs: any[] = []
 /** Channel the latest render belongs to. */
 let latestChannel = ''
@@ -134,13 +139,19 @@ function typeName(node: any): string {
 /**
  * Structural match for the message box input. Minified builds drop
  * `displayName`, so the shape of the props is what identifies it.
+ *
+ * The React Native `TextInput` is matched by identity or by name as well:
+ * the real message box does not always carry an `onChangeText` of its own,
+ * and without a match there would be no write path at all.
  */
 function isInputNode(node: any): boolean {
 	if (!node || typeof node !== 'object') return false
 	const props = node.props
 	if (!props || typeof props !== 'object') return false
-	if (typeof props.onChangeText !== 'function') return false
+	if (node.type === TextInput) return true
 	const name = typeName(node)
+	if (name === 'TextInput' || name.startsWith('TextInput')) return true
+	if (typeof props.onChangeText !== 'function') return false
 	return name !== 'View' && name !== 'RCTView' && name !== 'Text'
 }
 
@@ -333,11 +344,13 @@ function resolveInstance(): any {
 }
 
 /**
- * Collects every `onChangeText` in the message box subtree.
+ * Collects every input element in the message box subtree.
  *
  * The node `locate` returns is the outermost match, and that is not always
  * the handler Discord actually calls, so all of them are recorded through
- * and written to.
+ * and written to. The elements themselves are kept, not their props: an
+ * input without an `onChangeText` is still a place the text can live, and
+ * dropping it would hide that from the diagnostics.
  */
 function collectInputs(node: any, out: any[], depth = 0) {
 	if (node == null || depth > MAX_FIND_DEPTH) return
@@ -348,7 +361,8 @@ function collectInputs(node: any, out: any[], depth = 0) {
 	if (typeof node !== 'object') return
 	const props = node.props
 	if (!props || typeof props !== 'object') return
-	if (typeof props.onChangeText === 'function') out.push(props)
+	if (isInputNode(node) || typeof props.onChangeText === 'function')
+		out.push(node)
 	if (props.children != null) collectInputs(props.children, out, depth + 1)
 }
 
@@ -374,7 +388,7 @@ function applyText(text: string) {
 	}
 
 	// What the visible input is driven by: every handler of the subtree.
-	for (const props of latestInputs) call(props, 'onChangeText')
+	for (const el of latestInputs) call(el?.props ?? el, 'onChangeText')
 
 	// The instance behind the ref, resolved only now.
 	const instance = resolveInstance()
@@ -391,7 +405,7 @@ function applyText(text: string) {
  *
  * The app cannot be debugged from outside, so the state of every write path
  * goes into a toast a moment later, once React had the chance to render the
- * new text.
+ * new text. Kept short on purpose: toasts truncate long text.
  */
 function diagnose(
 	action: string,
@@ -399,36 +413,49 @@ function diagnose(
 	ok: boolean,
 	expected?: string,
 ) {
+	const clip = (value: unknown, max = 8) => {
+		try {
+			const text = value === undefined || value === null ? '-' : String(value)
+			return text.length > max ? `${text.slice(0, max)}…` : text
+		} catch {
+			return '-'
+		}
+	}
+
 	try {
 		setTimeout(() => {
 			try {
 				const counts = debugHistory(channelId)
-				const props = latestInputs[0]
+				const el = latestInputs[0]
+				const props = el?.props ?? el
 				const instance = resolveInstance()
 				const draft = readDraft(channelId)
 				const value =
 					typeof props?.value === 'string'
 						? props.value
 						: props?.defaultValue != null
-							? `def:${props.defaultValue}`
+							? `d:${props.defaultValue}`
 							: '-'
-				const parts = [
-					`${action} ${ok ? 'ok' : 'empty'} hist=${counts.past}/${counts.future}`,
-					`inputs=${latestInputs.length}`,
-					`inst=${
-						instance && typeof instance.handleTextChanged === 'function'
-							? 'y'
-							: 'n'
-					}`,
-					`handler=${chatHandler ? 'y' : 'n'}`,
-					`module=${chatModule ? 'y' : 'n'}`,
-					`value=${JSON.stringify(value)}`,
-					`draft=${JSON.stringify(typeof draft === 'string' ? draft : '-')}`,
-				]
-				if (expected !== undefined)
-					parts.push(`want=${JSON.stringify(expected)}`)
+				const native = refTarget(props?.ref ?? el?.ref)
+				const hasNative =
+					native &&
+					(typeof native.clear === 'function' ||
+						typeof native.getNativeRef === 'function' ||
+						typeof native.setNativeProps === 'function')
+				const flags = [
+					latestInputs.length > 0 ? 'p1' : 'p0',
+					instance && typeof instance.handleTextChanged === 'function'
+						? 'i1'
+						: 'i0',
+					chatHandler ? 'h1' : 'h0',
+					chatModule ? 'm1' : 'm0',
+					insertModule ? 's1' : 's0',
+					setterModule ? 't1' : 't0',
+					hasNative ? 'r1' : 'r0',
+				].join('')
+				const want = expected === undefined ? '-' : clip(expected)
 				ToastActionCreators.open('HAKUXYZ_TYPING_HISTORY_DIAG', {
-					text: parts.join(' · '),
+					text: `${action}:${ok ? 'y' : 'n'} ${counts.past}/${counts.future} v:${clip(value)} d:${clip(draft)} w:${want} ${flags}`,
 					variant: 'default',
 				})
 			} catch {}
@@ -468,7 +495,8 @@ function decorate(result: any, allowInject: boolean): any {
 		// Keep the last known set: a later render without an input in view
 		// must not take the write paths away.
 		if (inputs.length > 0) latestInputs = inputs
-		const inputProps = inputs[0] ?? located?.input?.props
+		const inputEl = inputs[0] ?? located?.input
+		const inputProps = inputEl?.props ?? located?.input?.props
 		if (inputProps) latestInputProps = inputProps
 
 		// Keep the ref object, not its value: the value only exists after the
@@ -479,6 +507,7 @@ function decorate(result: any, allowInject: boolean): any {
 			inputProps?.inputRef,
 			inputProps?.textInputRef,
 			inputProps?.ref,
+			inputEl?.ref,
 		]
 		for (const ref of refs) {
 			if (ref && typeof ref === 'object' && 'current' in ref) {
@@ -487,7 +516,7 @@ function decorate(result: any, allowInject: boolean): any {
 			}
 		}
 
-		for (const props of inputs) wireInput(props)
+		for (const el of inputs) wireInput(el?.props ?? el)
 		const instance = resolveInstance()
 
 		const channelId = channelFor(
@@ -703,6 +732,25 @@ function bootstrap(cleanup: Cleanup, storage: any) {
 				chatModule ??= module
 			},
 			{ max: 1 },
+		),
+	)
+	// Diagnostics only: modules that can write into the box on some builds.
+	cleanup(
+		getModules(
+			withProps('selectGIF', 'insertText'),
+			module => {
+				insertModule ??= module
+			},
+			{ max: 1 },
+		),
+	)
+	cleanup(
+		getModules(
+			withProps('setText', 'clearText'),
+			module => {
+				setterModule ??= module
+			},
+			{ max: 3 },
 		),
 	)
 	cleanup(
