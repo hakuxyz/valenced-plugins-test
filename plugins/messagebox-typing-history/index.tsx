@@ -491,7 +491,29 @@ function decorate(result: any, allowInject: boolean): any {
 		if (!located && !refHolder) return result
 
 		const inputs: any[] = []
-		if (located) collectInputs(located.input, inputs)
+		const pushInputs = (root: any) => {
+			if (!root) return
+			const found: any[] = []
+			collectInputs(root, found)
+			for (const node of found) {
+				if (!inputs.includes(node)) inputs.push(node)
+			}
+		}
+
+		if (located) pushInputs(located.input)
+		// When the guard only exposes a ref holder, search its subtree and the
+		// whole result: the real input may sit outside the located branch.
+		if (inputs.length === 0 && refHolder) pushInputs(refHolder)
+		if (inputs.length === 0) {
+			const found = findNode(
+				result,
+				node =>
+					isInputNode(node) || typeof node?.props?.onChangeText === 'function',
+			)
+			if (found) pushInputs(found)
+		}
+		if (inputs.length === 0) pushInputs(result)
+
 		// Keep the last known set: a later render without an input in view
 		// must not take the write paths away.
 		if (inputs.length > 0) latestInputs = inputs
