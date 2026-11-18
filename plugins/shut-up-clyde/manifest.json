@@ -1,0 +1,20 @@
+{
+	"format": 1,
+	"id": "hakuxyz.shut-up-clyde",
+	"name": "Shut Up Clyde",
+	"description": "Hide Clyde errors and remove Nitro upsell prompts and popups.",
+	"author": "hakuxyz (https://github.com/hakuxyz \"GitHub\")",
+	"version": "1.0.0",
+	"icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0OCIgaGVpZ2h0PSI0OCIgdmlld0JveD0iMCAwIDQ4IDQ4Ij48cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMCIgZmlsbD0iIzFmMjEzMSIvPjxwYXRoIGQ9Ik0xMiAyMGE0IDQgMCAwIDEgNC00aDE2YTQgNCAwIDAgMSA0IDR2MTBhNCA0IDAgMCAxLTQgNEgxNmE0IDQgMCAwIDEtNC00VjIwWm04IDF2Nm04LTZ2Nk05IDI0aC0zbTM2IDBoLTMiIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2YwYjIzMiIgc3Ryb2tlLXdpZHRoPSIzIiBzdHJva2UtbGluZWNhcD0icm91bmQiLz48cGF0aCBkPSJNMTMgMzUgMzUgMTMiIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2VkNDI0NSIgc3Ryb2tlLXdpZHRoPSI0IiBzdHJva2UtbGluZWNhcD0icm91bmQiLz48L3N2Zz4=",
+	"dependencies": {
+		"valenced.api": {
+			"version": ">=1 <2"
+		},
+		"discord": {
+			"version": "*"
+		}
+	},
+	"dist": {
+		"script": "index.js"
+	}
+}
