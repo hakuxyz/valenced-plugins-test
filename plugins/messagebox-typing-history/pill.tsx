@@ -6,7 +6,9 @@ import {
 	canUndo,
 	channelFor,
 	currentSettings,
+	lastApplied,
 	redo,
+	report,
 	subscribe,
 	undo,
 } from './state'
@@ -83,19 +85,22 @@ const GAP = 6
 
 /** Snapshot is a string so React can compare it by value. */
 function snapshot(channelId: string) {
-	return `${canUndo(channelId) ? 1 : 0}${canRedo(channelId) ? 1 : 0}`
+	const settings = currentSettings()
+	return `${settings.buttons ? 1 : 0}${settings.gestures ? 1 : 0}${settings.size}${canUndo(channelId) ? 1 : 0}${canRedo(channelId) ? 1 : 0}`
 }
 
 function Button({
 	label,
 	accessibilityLabel,
-	disabled,
+	available,
 	onPress,
 	metrics,
 }: {
 	label: string
 	accessibilityLabel: string
-	disabled: boolean
+	/** Whether there is history to act on. The button stays pressable so a
+	 * tap always reports what happened. */
+	available: boolean
 	onPress: () => void
 	metrics: Metrics
 }) {
@@ -103,7 +108,6 @@ function Button({
 		<Pressable
 			accessibilityRole="button"
 			accessibilityLabel={accessibilityLabel}
-			disabled={disabled}
 			onPress={onPress}
 			style={({ pressed }) => [
 				styles.button,
@@ -113,7 +117,7 @@ function Button({
 					borderRadius: metrics.height / 2,
 				},
 				pressed && styles.pressed,
-				disabled && styles.disabled,
+				!available && styles.disabled,
 			]}
 		>
 			<Text
@@ -131,7 +135,7 @@ function Button({
 
 /**
  * Small undo and redo pill that floats above the message box.
- * Re-renders whenever the channel history changes.
+ * Re-renders whenever the channel history or the settings change.
  */
 export default function TypingHistoryPill({ channelId }: Props) {
 	const settings = currentSettings()
@@ -142,8 +146,14 @@ export default function TypingHistoryPill({ channelId }: Props) {
 		() => snapshot(channelFor(channelId)),
 	)
 
-	const canGoBack = state[0] === '1'
-	const canGoForward = state[1] === '1'
+	const canGoBack = state[state.length - 2] === '1'
+	const canGoForward = state[state.length - 1] === '1'
+
+	const run = (action: 'undo' | 'redo') => {
+		const channel = channelFor(channelId)
+		const ok = action === 'undo' ? undo(channel) : redo(channel)
+		report(action, channel, ok, ok ? lastApplied() : undefined)
+	}
 
 	return (
 		<View
@@ -161,16 +171,16 @@ export default function TypingHistoryPill({ channelId }: Props) {
 			<Button
 				label="↶"
 				accessibilityLabel="Undo typing"
-				disabled={!settings.buttons || !canGoBack}
-				onPress={() => undo(channelFor(channelId))}
+				available={settings.buttons && canGoBack}
+				onPress={() => run('undo')}
 				metrics={metrics}
 			/>
 			<View style={[styles.divider, { height: metrics.divider }]} />
 			<Button
 				label="↷"
 				accessibilityLabel="Redo typing"
-				disabled={!settings.buttons || !canGoForward}
-				onPress={() => redo(channelFor(channelId))}
+				available={settings.buttons && canGoForward}
+				onPress={() => run('redo')}
 				metrics={metrics}
 			/>
 		</View>

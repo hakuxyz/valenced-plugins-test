@@ -1,3 +1,4 @@
+import { ToastActionCreators } from '@valenced/discord/actions'
 import { getModules } from '@valenced/modules/finders'
 import { withName, withProps } from '@valenced/modules/finders/filters'
 import { after, before } from '@valenced/patcher'
@@ -10,10 +11,14 @@ import { DefaultSettings } from './shared'
 import {
 	channelFor,
 	currentSettings,
+	debugHistory,
+	readDraft,
 	record,
 	seed,
 	setApplier,
+	setReporter,
 	setSettingsGetter,
+	settingsChanged,
 } from './state'
 import type { AnyFunction } from '@valenced/utils/types'
 import type { Settings } from './shared'
@@ -65,8 +70,12 @@ let latestInputProps: any
  * history is applied instead of during whichever render happened to see it.
  */
 let refHolderRef: any
-/** Chat input module, used as a writer only when nothing else is reachable. */
+/** Chat input module, used as a writer when the tree does not reach one. */
 let chatModule: any
+/** Module that owns `handleTextChanged`, observed and used as a writer. */
+let chatHandler: any
+/** Every input props object in the message box subtree, all of them live. */
+let latestInputs: any[] = []
 /** Channel the latest render belongs to. */
 let latestChannel = ''
 /**
@@ -218,34 +227,53 @@ function locate(node: any, ancestors: any[], depth = 0): Located | undefined {
 	return found
 }
 
+/** Marks an object whose handler is already observed. */
+const observed = new WeakSet<object>()
+
 /**
- * Observes typing through the instance handler, once per instance.
+ * Observes typing through `handleTextChanged` on whatever object holds it.
  *
  * Reading keystrokes this way survives minification, which is why the known
- * chat plugins use the same hook.
+ * chat plugins use the same hook. The receiver is left untouched, so the
+ * original call keeps working exactly as before.
  */
+function observeHandler(target: any): (() => void) | undefined {
+	if (
+		!target ||
+		(typeof target !== 'object' && typeof target !== 'function') ||
+		typeof target.handleTextChanged !== 'function' ||
+		observed.has(target)
+	)
+		return undefined
+	try {
+		const unpatch = beforeLoose(target, 'handleTextChanged', (args: any[]) => {
+			try {
+				const text = args?.[0]
+				if (typeof text === 'string') record(liveChannel(), text)
+			} catch {}
+			// Valenced replaces the call arguments with the return value.
+			return args
+		})
+		observed.add(target)
+		return () => {
+			observed.delete(target)
+			unpatch()
+		}
+	} catch {
+		return undefined
+	}
+}
+
+/** Observes typing through the instance handler, once per instance. */
 function wireInstance(instance: any) {
 	if (wired.has(instance)) return
-	if (typeof instance?.handleTextChanged !== 'function') return
-	try {
-		const unpatch = beforeLoose(
-			instance,
-			'handleTextChanged',
-			(args: any[]) => {
-				try {
-					const text = args?.[0]
-					if (typeof text === 'string') record(liveChannel(), text)
-				} catch {}
-				// Valenced replaces the call arguments with the return value.
-				return args
-			},
-		)
-		wired.add(instance)
-		register?.(() => {
-			wired.delete(instance)
-			unpatch()
-		})
-	} catch {}
+	const unpatch = observeHandler(instance)
+	if (!unpatch) return
+	wired.add(instance)
+	register?.(() => {
+		wired.delete(instance)
+		unpatch()
+	})
 }
 
 /**
@@ -305,13 +333,33 @@ function resolveInstance(): any {
 }
 
 /**
+ * Collects every `onChangeText` in the message box subtree.
+ *
+ * The node `locate` returns is the outermost match, and that is not always
+ * the handler Discord actually calls, so all of them are recorded through
+ * and written to.
+ */
+function collectInputs(node: any, out: any[], depth = 0) {
+	if (node == null || depth > MAX_FIND_DEPTH) return
+	if (Array.isArray(node)) {
+		for (const child of node) collectInputs(child, out, depth + 1)
+		return
+	}
+	if (typeof node !== 'object') return
+	const props = node.props
+	if (!props || typeof props !== 'object') return
+	if (typeof props.onChangeText === 'function') out.push(props)
+	if (props.children != null) collectInputs(props.children, out, depth + 1)
+}
+
+/**
  * Writes a history entry back into the message box.
  *
- * The text can be reached through the live input props, through the instance
- * behind `chatInputRef` or through the chat input module, and which of them
+ * The text can be reached through the input handlers, through the instance
+ * behind `chatInputRef` and through the chat input modules, and which of them
  * is alive depends on when the last render happened. Every path that exists
  * is called with the same text: they all mean "the text is now this", each
- * one is guarded, and a stale target can never break the others.
+ * one is guarded, and calling more than one is harmless.
  */
 function applyText(text: string) {
 	const called = new Set<unknown>()
@@ -325,17 +373,67 @@ function applyText(text: string) {
 		} catch {}
 	}
 
-	// What the visible input is driven by.
-	call(latestInputProps, 'onChangeText')
-	call(latestInputProps, 'handleTextChanged')
+	// What the visible input is driven by: every handler of the subtree.
+	for (const props of latestInputs) call(props, 'onChangeText')
 
 	// The instance behind the ref, resolved only now.
 	const instance = resolveInstance()
 	call(instance, 'handleTextChanged')
 	call(instance?.props, 'onChangeText')
 
-	// Nothing live was reachable: fall back to the module level setter.
-	if (called.size === 0) call(chatModule, 'changeText')
+	// The module level handlers, which do not depend on any render.
+	call(chatHandler, 'handleTextChanged')
+	call(chatModule, 'changeText')
+}
+
+/**
+ * Reports what an undo or redo attempt did.
+ *
+ * The app cannot be debugged from outside, so the state of every write path
+ * goes into a toast a moment later, once React had the chance to render the
+ * new text.
+ */
+function diagnose(
+	action: string,
+	channelId: string,
+	ok: boolean,
+	expected?: string,
+) {
+	try {
+		setTimeout(() => {
+			try {
+				const counts = debugHistory(channelId)
+				const props = latestInputs[0]
+				const instance = resolveInstance()
+				const draft = readDraft(channelId)
+				const value =
+					typeof props?.value === 'string'
+						? props.value
+						: props?.defaultValue != null
+							? `def:${props.defaultValue}`
+							: '-'
+				const parts = [
+					`${action} ${ok ? 'ok' : 'empty'} hist=${counts.past}/${counts.future}`,
+					`inputs=${latestInputs.length}`,
+					`inst=${
+						instance && typeof instance.handleTextChanged === 'function'
+							? 'y'
+							: 'n'
+					}`,
+					`handler=${chatHandler ? 'y' : 'n'}`,
+					`module=${chatModule ? 'y' : 'n'}`,
+					`value=${JSON.stringify(value)}`,
+					`draft=${JSON.stringify(typeof draft === 'string' ? draft : '-')}`,
+				]
+				if (expected !== undefined)
+					parts.push(`want=${JSON.stringify(expected)}`)
+				ToastActionCreators.open('HAKUXYZ_TYPING_HISTORY_DIAG', {
+					text: parts.join(' · '),
+					variant: 'default',
+				})
+			} catch {}
+		}, 400)
+	} catch {}
 }
 
 /**
@@ -365,7 +463,12 @@ function decorate(result: any, allowInject: boolean): any {
 		// Not the message box: never mutate or wire anything.
 		if (!located && !refHolder) return result
 
-		const inputProps = located?.input?.props
+		const inputs: any[] = []
+		if (located) collectInputs(located.input, inputs)
+		// Keep the last known set: a later render without an input in view
+		// must not take the write paths away.
+		if (inputs.length > 0) latestInputs = inputs
+		const inputProps = inputs[0] ?? located?.input?.props
 		if (inputProps) latestInputProps = inputProps
 
 		// Keep the ref object, not its value: the value only exists after the
@@ -384,7 +487,7 @@ function decorate(result: any, allowInject: boolean): any {
 			}
 		}
 
-		if (inputProps) wireInput(inputProps)
+		for (const props of inputs) wireInput(props)
 		const instance = resolveInstance()
 
 		const channelId = channelFor(
@@ -468,8 +571,11 @@ function install(
 		const unpatch = afterLoose(proto, 'render', result =>
 			decorate(result, !guardActive),
 		)
+		// Keystrokes, independent of which instance holds the ref.
+		const unobserve = observeHandler(proto)
 		cleanup(() => {
 			unpatch()
+			unobserve?.()
 			seen.delete(target)
 			seen.delete(target.prototype)
 		})
@@ -563,16 +669,33 @@ function scanGuard(namespace: unknown, cleanup: Cleanup) {
 	} catch {}
 }
 
-function bootstrap(cleanup: Cleanup, jsonStorage: any) {
+function bootstrap(cleanup: Cleanup, storage: any) {
 	register = cleanup
+	// Read the storage on every access: `cache` is replaced when the document
+	// loads or is written to, so it must not be captured once here.
 	setSettingsGetter(() => ({
 		...DefaultSettings,
-		...(jsonStorage ?? {}),
+		...(storage?.cache ?? {}),
 	}))
+	if (typeof storage?.subscribe === 'function') {
+		cleanup(storage.subscribe(() => settingsChanged()))
+	}
 	setGestureChannelGetter(() => latestChannel || channelFor())
 	setApplier(applyText)
-	// Last resort writer, only used when neither the input props nor the
-	// instance behind the ref are reachable.
+	setReporter(diagnose)
+
+	// Module level handlers: they keep working across a remount of the input.
+	cleanup(
+		getModules(
+			withProps('handleTextChanged'),
+			module => {
+				chatHandler ??= module
+				const unpatch = observeHandler(module)
+				if (unpatch) cleanup(unpatch)
+			},
+			{ max: 3 },
+		),
+	)
 	cleanup(
 		getModules(
 			withProps('handleSendMessage', 'changeText'),
@@ -596,10 +719,10 @@ export default plugin<{ jsonStorage: Settings }>({
 		default: DefaultSettings,
 	},
 	init({ cleanup, jsonStorage }) {
-		bootstrap(cleanup, jsonStorage.cache)
+		bootstrap(cleanup, jsonStorage)
 	},
 	start({ cleanup, jsonStorage }) {
-		bootstrap(cleanup, jsonStorage.cache)
+		bootstrap(cleanup, jsonStorage)
 	},
 	SettingsComponent,
 })

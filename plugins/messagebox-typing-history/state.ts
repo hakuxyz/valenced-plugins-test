@@ -25,9 +25,66 @@ const listeners = new Set<() => void>()
 let suppress = false
 let settingsGetter: () => Settings = () => DefaultSettings
 let applier: ((text: string) => void) | undefined
+/** Text the last undo or redo tried to write back. */
+let applied: string | undefined
+
+type Reporter = (
+	action: string,
+	channelId: string,
+	ok: boolean,
+	expected?: string,
+) => void
+
+let reporter: Reporter | undefined
 
 export function setSettingsGetter(fn: () => Settings) {
 	settingsGetter = fn
+}
+
+/** Called whenever the plugin settings changed, so the pill re-reads them. */
+export function settingsChanged() {
+	notify()
+}
+
+/** Registers the diagnostic callback used after undo and redo. */
+export function setReporter(fn: Reporter) {
+	reporter = fn
+}
+
+/** Reports what an undo or redo attempt did. */
+export function report(
+	action: string,
+	channelId: string,
+	ok: boolean,
+	expected?: string,
+) {
+	try {
+		reporter?.(action, channelId, ok, expected)
+	} catch {}
+}
+
+/** Text the last undo or redo tried to write back. */
+export function lastApplied(): string | undefined {
+	return applied
+}
+
+/** History counters, used by the diagnostic toast. */
+export function debugHistory(channelId: string): {
+	past: number
+	future: number
+	current: string
+} {
+	const h = history(channelId)
+	return { past: h.past.length, future: h.future.length, current: h.current }
+}
+
+/** Draft Discord stored for the channel, used by the diagnostic toast. */
+export function readDraft(channelId: string): unknown {
+	try {
+		return store('DraftStore')?.getDraft?.(channelId, 0)
+	} catch {
+		return undefined
+	}
 }
 
 export function currentSettings(): Settings {
@@ -129,6 +186,7 @@ function commit(channelId: string, text: string) {
 	const h = history(channelId)
 	h.current = text
 	h.lastChange = 0
+	applied = text
 
 	suppress = true
 	try {
