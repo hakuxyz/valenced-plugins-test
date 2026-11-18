@@ -1,4 +1,3 @@
-import { ToastActionCreators } from '@valenced/discord/actions'
 import { getModules } from '@valenced/modules/finders'
 import { withProps } from '@valenced/modules/finders/filters'
 import { before, instead } from '@valenced/patcher'
@@ -33,23 +32,6 @@ const OVERLAY_KEY = 'hakuxyz-oneko-overlay'
 let mounted = new WeakSet<object>()
 /** Parent/key pairs already hooked, so every module holding a view is patched. */
 let patched = new WeakMap<object, Set<string>>()
-let mountNotified = false
-let scanCount = 0
-let viewPatchCount = 0
-let renderChecks = 0
-let flexSeen = 0
-let navSeen = 0
-let flexSamples = 0
-
-function diag(text: string) {
-	try {
-		console.log(`[Oneko] ${text}`)
-		ToastActionCreators.open('HAKUXYZ_ONEKO_DIAG', {
-			text: `[Oneko] ${text}`,
-			variant: 'default',
-		})
-	} catch {}
-}
 
 /**
  * Metro re-exports members such as `react-native`'s `View` as getters on the
@@ -128,52 +110,6 @@ function isNavStack(node: any): boolean {
 	return false
 }
 
-function typeName(node: any): string {
-	const type = node?.type
-	if (typeof type === 'function') return type.displayName ?? type.name ?? 'fn'
-	if (type && typeof type === 'object')
-		return (
-			type.displayName ??
-			type.name ??
-			type.type?.displayName ??
-			type.type?.name ??
-			'obj'
-		)
-	return String(type)
-}
-
-function sampleFlex(props: any, list: any[]) {
-	try {
-		const desc = list.map((child: any) => {
-			if (!child || typeof child !== 'object') return typeof child
-			const name = typeName(child)
-			const state = child.props?.state
-			let st = ''
-			if (state && typeof state === 'object') {
-				const rn = Array.isArray(state.routeNames)
-					? state.routeNames.join('|')
-					: ''
-				const rc = Array.isArray(state.routes) ? state.routes.length : -1
-				const idx = state.index
-				st = ` state[rn=${rn} rc=${rc} idx=${idx}]`
-			}
-			return `${name}${st}`
-		})
-		const line = desc.join(' || ')
-		const interesting =
-			line.includes('App') ||
-			line.includes('Screen') ||
-			line.includes('Stack') ||
-			line.includes('Navigation') ||
-			line.includes('Navigator') ||
-			line.includes('ThemeContext')
-		if (flexSamples < 12 || (interesting && flexSamples < 30)) {
-			flexSamples++
-			console.log(`[Oneko] flex sample children=${list.length} :: ${line}`)
-		}
-	} catch {}
-}
-
 /** Whether this element is the app root view holding the navigation stack. */
 function isRootProps(props: any): boolean {
 	if (!props || typeof props !== 'object') return false
@@ -186,7 +122,6 @@ function isRootProps(props: any): boolean {
 	) {
 		return false
 	}
-	flexSeen++
 
 	const children = props.children
 	const list = Array.isArray(children)
@@ -194,10 +129,7 @@ function isRootProps(props: any): boolean {
 		: children != null
 			? [children]
 			: []
-	const nav = list.some(isNavStack) || isNavStack(props)
-	if (nav) navSeen++
-	else sampleFlex(props, list)
-	return nav
+	return list.some(isNavStack) || isNavStack(props)
 }
 
 /**
@@ -210,10 +142,6 @@ function isRootProps(props: any): boolean {
 function mountInto(props: any) {
 	if (!props || typeof props !== 'object' || mounted.has(props)) return
 	mounted.add(props)
-	if (!mountNotified) {
-		mountNotified = true
-		diag('mounted')
-	}
 
 	const children = props.children
 	const list = Array.isArray(children)
@@ -263,7 +191,6 @@ function mountInto(props: any) {
 /** Checks the props of a `View` render and injects when it is the root. */
 function mountProps(props: any) {
 	try {
-		renderChecks++
 		if (isRootProps(props)) mountInto(props)
 	} catch {}
 }
@@ -320,29 +247,27 @@ function patchComponent(
 		// Class component: render() takes no props, read them from the instance.
 		if (typeof target.prototype?.render === 'function') {
 			const proto = target.prototype as unknown as Record<string, AnyFunction>
-			register(cleanup, proto, 'render', () => {
-				viewPatchCount++
-				return insteadLoose(
+			register(cleanup, proto, 'render', () =>
+				insteadLoose(
 					proto,
 					'render',
 					function (this: any, args: any[], original: AnyFunction) {
 						mountProps(this?.props)
 						return original.apply(this, args)
 					},
-				)
-			})
+				),
+			)
 			return
 		}
 		// Plain function component: the props are the first call argument.
 		ensureWritable(parent, key)
-		register(cleanup, parent, key, () => {
-			viewPatchCount++
-			return beforeLoose(parent, key, (args: any[]) => {
+		register(cleanup, parent, key, () =>
+			beforeLoose(parent, key, (args: any[]) => {
 				mountProps(args?.[0])
 				// Valenced replaces the call arguments with the return value.
 				return args
-			})
-		})
+			}),
+		)
 		return
 	}
 
@@ -350,13 +275,12 @@ function patchComponent(
 		// forwardRef wrapper: render(props, ref).
 		if (typeof target.render === 'function') {
 			const ref = target as unknown as Record<string, AnyFunction>
-			register(cleanup, ref, 'render', () => {
-				viewPatchCount++
-				return beforeLoose(ref, 'render', (args: any[]) => {
+			register(cleanup, ref, 'render', () =>
+				beforeLoose(ref, 'render', (args: any[]) => {
 					mountProps(args?.[0])
 					return args
-				})
-			})
+				}),
+			)
 			return
 		}
 		// memo wrapper: hook the inner type through the memo object.
@@ -373,13 +297,6 @@ function patchComponent(
 }
 
 function install(cleanup: Cleanup) {
-	scanCount = 0
-	viewPatchCount = 0
-	renderChecks = 0
-	flexSeen = 0
-	navSeen = 0
-	flexSamples = 0
-	mountNotified = false
 	mounted = new WeakSet<object>()
 	patched = new WeakMap<object, Set<string>>()
 	const scan = (namespace: unknown) => {
@@ -388,7 +305,6 @@ function install(cleanup: Cleanup) {
 			if (!ns || typeof ns !== 'object') return
 			const view = ns.View
 			if (!view) return
-			scanCount++
 			patchComponent(
 				view,
 				ns as unknown as Record<string, AnyFunction>,
@@ -404,15 +320,6 @@ function install(cleanup: Cleanup) {
 	// React Native's own View export as a fallback.
 	cleanup(getModules(withProps('View', 'Text', 'Image'), scan))
 	cleanup(getModules(withProps('View', 'Text', 'Image', 'ScrollView'), scan))
-
-	try {
-		setTimeout(() => {
-			if (!mountNotified)
-				diag(
-					`no mount s=${scanCount} p=${viewPatchCount} r=${renderChecks} f=${flexSeen} n=${navSeen}`,
-				)
-		}, 4000)
-	} catch {}
 }
 
 export default plugin<{ jsonStorage: Settings }>({
@@ -426,7 +333,6 @@ export default plugin<{ jsonStorage: Settings }>({
 			...DefaultSettings,
 			...(jsonStorage.cache ?? {}),
 		}))
-		diag('init')
 		install(cleanup)
 	},
 	start({ cleanup, jsonStorage }) {
@@ -434,7 +340,6 @@ export default plugin<{ jsonStorage: Settings }>({
 			...DefaultSettings,
 			...(jsonStorage.cache ?? {}),
 		}))
-		diag('start')
 		install(cleanup)
 	},
 	SettingsComponent,
