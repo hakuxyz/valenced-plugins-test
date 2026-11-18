@@ -30,7 +30,9 @@ const insteadLoose = instead as unknown as LooseInstead
 const OVERLAY_KEY = 'hakuxyz-oneko-overlay'
 
 /** Props objects we already injected into, to avoid duplicates. */
-const mounted = new WeakSet<object>()
+let mounted = new WeakSet<object>()
+/** Parent/key pairs already hooked, so every module holding a view is patched. */
+let patched = new WeakMap<object, Set<string>>()
 let mountNotified = false
 let scanCount = 0
 let viewPatchCount = 0
@@ -244,9 +246,6 @@ function mountProps(props: any) {
 	} catch {}
 }
 
-/** Parent/key pairs already hooked, so every module holding a view is patched. */
-const patched = new WeakMap<object, Set<string>>()
-
 function markPatched(parent: object, key: string): boolean {
 	let keys = patched.get(parent)
 	if (!keys) {
@@ -359,6 +358,8 @@ function install(cleanup: Cleanup) {
 	navSeen = 0
 	flexSamples = 0
 	mountNotified = false
+	mounted = new WeakSet<object>()
+	patched = new WeakMap<object, Set<string>>()
 	const scan = (namespace: unknown) => {
 		try {
 			const ns = namespace as Record<string, unknown> | null
