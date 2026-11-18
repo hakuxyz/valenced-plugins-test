@@ -246,7 +246,10 @@ export default function OnekoOverlay() {
 		<View
 			pointerEvents="none"
 			collapsable={false}
-			style={[StyleSheet.absoluteFillObject, { zIndex: 9999, elevation: 9999 }]}
+			style={[
+				StyleSheet.absoluteFillObject,
+				{ zIndex: 2147483647, elevation: 2147483647 },
+			]}
 			onLayout={e => {
 				sharedArea.w = e.nativeEvent.layout.width
 				sharedArea.h = e.nativeEvent.layout.height
@@ -260,11 +263,21 @@ export default function OnekoOverlay() {
 						top: 0,
 						width: size,
 						height: size,
+						zIndex: 2147483647,
+						elevation: 2147483647,
 					},
 					{ transform: [{ translateX: sharedX }, { translateY: sharedY }] },
 				]}
 			>
-				<View style={{ width: size, height: size, overflow: 'hidden' }}>
+				<View
+					style={{
+						width: size,
+						height: size,
+						overflow: 'hidden',
+						zIndex: 2147483647,
+						elevation: 2147483647,
+					}}
+				>
 					<Image
 						source={sheet}
 						style={{
