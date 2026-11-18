@@ -338,49 +338,6 @@ function hideReplyAvatar(out: any, settings: Settings): void {
 	reference.content = [nameNode, textNode(' '), ...content]
 }
 
-function imageEmbed(attachment: any): AstNode {
-	const url = String(attachment?.url ?? '')
-	return {
-		type: 'image',
-		spoiler: attachment?.isSpoiler ? 'SPOILER' : '',
-		url,
-		image: {
-			url,
-			proxyURL: url,
-			width: attachment?.width ?? 0,
-			height: attachment?.height ?? 0,
-			placeholder: '',
-			placeholderVersion: 0,
-			description: '',
-			srclsAnimated: false,
-			srcIsAnimated: false,
-			flags: 0,
-			contentType: String(attachment?.contentType ?? ''),
-		},
-		fields: [],
-		borderLeftColor: 0,
-		providerColor: 0,
-		headerTextColor: 0,
-		bodyTextColor: 0,
-	}
-}
-
-function convertSingleImageAttachment(out: any): void {
-	const attachments = out?.attachments
-	if (!Array.isArray(attachments)) return
-
-	const images = attachments.filter(
-		attachment => attachment?.attachmentType === 'image',
-	)
-	if (images.length !== 1) return
-
-	const embeds = Array.isArray(out.embeds) ? out.embeds : []
-	out.embeds = [...embeds, imageEmbed(images[0])]
-	out.attachments = attachments.filter(
-		attachment => attachment?.attachmentType !== 'image',
-	)
-}
-
 function transform(result: any, data: RowData | undefined): any {
 	const settings = currentSettings()
 	if (!settings.enabled) return result
@@ -415,7 +372,6 @@ function transform(result: any, data: RowData | undefined): any {
 
 	if (!settings.noInline) disableJumboable(outMessage.content)
 	hideReplyAvatar(outMessage, settings)
-	convertSingleImageAttachment(outMessage)
 	return result
 }
 
