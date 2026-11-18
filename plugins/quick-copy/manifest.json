@@ -1,0 +1,20 @@
+{
+	"format": 1,
+	"id": "hakuxyz.quick-copy",
+	"name": "QuickCopy",
+	"description": "Slash commands to copy user ids, avatar URLs, and channel ids.",
+	"author": "hakuxyz (https://github.com/hakuxyz \"GitHub\")",
+	"version": "1.0.0",
+	"icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0OCIgaGVpZ2h0PSI0OCIgdmlld0JveD0iMCAwIDQ4IDQ4Ij48cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMCIgZmlsbD0iIzFmMjEzMSIvPjxwYXRoIGQ9Ik0xNCAxOGgyME0xNCAyNmgyME0xNCAzNGgxMiIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjNTlhNmZmIiBzdHJva2Utd2lkdGg9IjQiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPjxwYXRoIGQ9Ik0zMiAzMmw2IDZtMC02djZoLTYiIGZpbGw9Im5vbmUiIHN0cm9rZT0iIzU5YTZmZiIgc3Ryb2tlLXdpZHRoPSIzIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz48L3N2Zz4=",
+	"dependencies": {
+		"valenced.api": {
+			"version": ">=1 <2"
+		},
+		"discord": {
+			"version": "*"
+		}
+	},
+	"dist": {
+		"script": "index.js"
+	}
+}
