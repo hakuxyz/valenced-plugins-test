@@ -37,6 +37,7 @@ let viewPatchCount = 0
 let renderChecks = 0
 let flexSeen = 0
 let navSeen = 0
+let flexSamples = 0
 
 function diag(text: string) {
 	try {
@@ -106,6 +107,45 @@ function isNavStack(node: any): boolean {
 	return false
 }
 
+function typeName(node: any): string {
+	const type = node?.type
+	if (typeof type === 'function') return type.displayName ?? type.name ?? 'fn'
+	if (type && typeof type === 'object')
+		return (
+			type.displayName ??
+			type.name ??
+			type.type?.displayName ??
+			type.type?.name ??
+			'obj'
+		)
+	return String(type)
+}
+
+function sampleFlex(props: any, list: any[]) {
+	if (flexSamples >= 6) return
+	flexSamples++
+	try {
+		const desc = list.map((child: any) => {
+			if (!child || typeof child !== 'object') return typeof child
+			const name = typeName(child)
+			const state = child.props?.state
+			let st = ''
+			if (state && typeof state === 'object') {
+				const rn = Array.isArray(state.routeNames)
+					? state.routeNames.join('|')
+					: ''
+				const rc = Array.isArray(state.routes) ? state.routes.length : -1
+				const idx = state.index
+				st = ` state[rn=${rn} rc=${rc} idx=${idx}]`
+			}
+			return `${name}${st}`
+		})
+		console.log(
+			`[Oneko] flex sample children=${list.length} :: ${desc.join(' || ')}`,
+		)
+	} catch {}
+}
+
 /** Whether this element is the app root view holding the navigation stack. */
 function isRootProps(props: any): boolean {
 	if (!props || typeof props !== 'object') return false
@@ -128,6 +168,7 @@ function isRootProps(props: any): boolean {
 			: []
 	const nav = list.some(isNavStack) || isNavStack(props)
 	if (nav) navSeen++
+	else sampleFlex(props, list)
 	return nav
 }
 
@@ -312,6 +353,7 @@ function install(cleanup: Cleanup) {
 	renderChecks = 0
 	flexSeen = 0
 	navSeen = 0
+	flexSamples = 0
 	mountNotified = false
 	const scan = (namespace: unknown) => {
 		try {
