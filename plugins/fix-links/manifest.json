@@ -1,0 +1,20 @@
+{
+	"format": 1,
+	"id": "hakuxyz.fix-links",
+	"name": "FixLinks",
+	"description": "Rewrite social media links to embed-friendly domains before sending messages.",
+	"author": "hakuxyz (https://github.com/hakuxyz \"GitHub\")",
+	"version": "1.0.0",
+	"icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0OCIgaGVpZ2h0PSI0OCIgdmlld0JveD0iMCAwIDQ4IDQ4Ij48cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMCIgZmlsbD0iIzFmMjEzMSIvPjxwYXRoIGQ9Ik0yMCAyOGw4LThNMTcgMzRsLTMgM2E3IDcgMCAwIDEtMTAtMTBsNi02YTcgNyAwIDAgMSAxMCAwbDItMk0zMSAxNGwzLTNhNyA3IDAgMCAxIDEwIDEwbC02IDZhNyA3IDAgMCAxLTEwIDBsLTIgMiIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZjBiMjMyIiBzdHJva2Utd2lkdGg9IjQiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPjwvc3ZnPg==",
+	"dependencies": {
+		"valenced.api": {
+			"version": ">=1 <2"
+		},
+		"discord": {
+			"version": "*"
+		}
+	},
+	"dist": {
+		"script": "index.js"
+	}
+}
