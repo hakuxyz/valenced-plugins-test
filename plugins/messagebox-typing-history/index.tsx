@@ -437,6 +437,18 @@ function applyText(text: string) {
 		setNative(ref)
 	}
 
+	// Last resort: some class inputs keep their text in component state.
+	try {
+		if (instance && typeof instance.setState === 'function') {
+			instance.setState({ text, value: text })
+		}
+	} catch {}
+	try {
+		if (instance && typeof instance.forceUpdate === 'function') {
+			instance.forceUpdate()
+		}
+	} catch {}
+
 	// The module level handlers, which do not depend on any render.
 	call(chatHandler, 'handleTextChanged')
 	call(chatModule, 'changeText')
