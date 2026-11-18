@@ -74,40 +74,48 @@ function isNavStack(node: any): boolean {
 	const state = node.props?.state
 	if (state && typeof state === 'object') {
 		const names = state.routeNames
-		if (Array.isArray(names) && names.includes('main') && names.length >= 2) {
-			return true
-		}
-		if (Array.isArray(state.routes) && typeof state.index === 'number') {
-			return true
+		if (Array.isArray(names) && names.length >= 2) return true
+		if (Array.isArray(state.routes) && state.routes.length >= 1) {
+			if (typeof state.index === 'number') return true
+			if (state.routes.some((r: any) => r && typeof r?.key === 'string'))
+				return true
 		}
 	}
 
 	const type = node.type
-	return (
-		type?.name === 'NativeStackViewInner' ||
-		type?.displayName === 'NativeStackViewInner'
-	)
+	const name = type?.name ?? type?.displayName ?? ''
+	if (typeof name === 'string' && name) {
+		if (name === 'NativeStackViewInner') return true
+		if (name.includes('Stack') || name.includes('Navigator')) return true
+	}
+	return false
 }
 
 /** Whether this element is the app root view holding the navigation stack. */
 function isRootProps(props: any): boolean {
 	if (!props || typeof props !== 'object') return false
 	// Deep flattened: the style may be a nested array of style objects.
-	if (
-		!flattenStyle(props.style).some(
-			(s: any) =>
-				s && typeof s === 'object' && (s.flex === 1 || s.flexGrow === 1),
-		)
-	) {
-		return false
-	}
+	const styles = flattenStyle(props.style)
+	const hasFlex = styles.some(
+		(s: any) =>
+			s && typeof s === 'object' && (s.flex === 1 || s.flexGrow === 1),
+	)
+	if (!hasFlex) return false
 
 	const children = props.children
-	const list = Array.isArray(children) ? children : [children]
+	const list = Array.isArray(children)
+		? children
+		: children != null
+			? [children]
+			: []
 	if (list.some(isNavStack)) return true
 
 	// The root view itself may carry the navigation state.
-	return isNavStack(props)
+	if (isNavStack(props)) return true
+
+	// Fallback: a full-flex root view with multiple children is very likely
+	// the app container even when the navigation stack shape is unknown.
+	return list.length >= 2
 }
 
 /**
@@ -117,9 +125,12 @@ function isRootProps(props: any): boolean {
  * changes what `View` actually renders - the same approach the proven
  * root view injections use.
  */
+let overlayMounted = false
+
 function mountInto(props: any) {
 	if (!props || typeof props !== 'object' || mounted.has(props)) return
 	mounted.add(props)
+	overlayMounted = true
 
 	const children = props.children
 	const list = Array.isArray(children)
@@ -166,10 +177,23 @@ function mountInto(props: any) {
 	}
 }
 
+function hasNavChild(props: any): boolean {
+	const children = props.children
+	const list = Array.isArray(children)
+		? children
+		: children != null
+			? [children]
+			: []
+	return list.some(isNavStack) || isNavStack(props)
+}
+
 /** Checks the props of a `View` render and injects when it is the root. */
 function mountProps(props: any) {
 	try {
-		if (isRootProps(props)) mountInto(props)
+		if (!isRootProps(props)) return
+		// Prefer a container that clearly holds navigation; use the broad
+		// flex fallback only until something has been mounted at all.
+		if (hasNavChild(props) || !overlayMounted) mountInto(props)
 	} catch {}
 }
 
