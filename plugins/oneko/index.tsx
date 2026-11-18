@@ -91,26 +91,13 @@ function isNavStack(node: any): boolean {
 
 	const type = node.type
 	const name = type?.name ?? type?.displayName ?? ''
+	// Strong, unique-enough root markers.
 	if (
 		name === 'NativeStackViewInner' ||
 		name === 'App' ||
-		name === 'ScreenStack' ||
-		name === 'ScreenContainer' ||
-		name === 'NavigationContainer' ||
-		name === 'RNSScreenStack' ||
-		name === 'ThemeContextProvider'
+		name === 'NavigationContainer'
 	)
 		return true
-
-	if (typeof name === 'string') {
-		if (
-			name.includes('Navigator') ||
-			name.includes('Navigation') ||
-			name.includes('ScreenStack') ||
-			(name.includes('Stack') && name.length > 5)
-		)
-			return true
-	}
 
 	const state = node.props?.state
 	if (state && typeof state === 'object') {
@@ -119,8 +106,6 @@ function isNavStack(node: any): boolean {
 			if (names.includes('main') && names.includes('modal')) return true
 			if (names.includes('main') && names.length >= 2) return true
 		}
-		if (Array.isArray(state.routes) && typeof state.index === 'number')
-			return true
 	}
 
 	return false
