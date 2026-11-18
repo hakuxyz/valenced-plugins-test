@@ -353,6 +353,7 @@ function getDispatchFn(): ((name: string, payload: any) => void) | undefined {
 
 function applyText(text: string) {
 	const called = new Set<unknown>()
+	const channelId = liveChannel()
 
 	const call = (owner: any, key: string) => {
 		try {
@@ -363,18 +364,16 @@ function applyText(text: string) {
 		} catch {}
 	}
 
-	const callWithChannel = (owner: any, key: string, channelId: string) => {
+	const callAny = (owner: any, key: string, ...argSets: any[][]) => {
 		try {
 			const fn = owner?.[key]
 			if (typeof fn !== 'function' || called.has(fn)) return
 			called.add(fn)
-			// try (channelId, text) and (text)
-			try {
-				fn.call(owner, channelId, text)
-			} catch {}
-			try {
-				fn.call(owner, text)
-			} catch {}
+			for (const args of argSets) {
+				try {
+					fn.apply(owner, args)
+				} catch {}
+			}
 		} catch {}
 	}
 
@@ -388,11 +387,15 @@ function applyText(text: string) {
 					t.setNativeProps({ text })
 				} catch {}
 			}
-			if (
-				typeof t.focus === 'function' &&
-				typeof t.setNativeProps === 'function'
-			) {
-				// keep focus state; some inputs need it
+			if (typeof t.setText === 'function') {
+				try {
+					t.setText(text)
+				} catch {}
+			}
+			if (typeof t.clear === 'function' && text === '') {
+				try {
+					t.clear()
+				} catch {}
 			}
 		} catch {}
 	}
@@ -418,14 +421,15 @@ function applyText(text: string) {
 		}
 	} catch {}
 
-	// What the visible input is driven by: every handler of the subtree.
+	// Visible inputs in subtree
 	for (const el of latestInputs) {
 		const props = el?.props ?? el
 		call(props, 'onChangeText')
+		call(props, 'onChange')
 		setNative(props?.ref ?? el?.ref)
 	}
 
-	// The instance behind the ref, resolved only now.
+	// Instance/ref paths
 	const instance = resolveInstance()
 	call(instance, 'handleTextChanged')
 	call(instance?.props, 'onChangeText')
@@ -448,7 +452,7 @@ function applyText(text: string) {
 
 	try {
 		if (instance && typeof instance.setState === 'function') {
-			instance.setState({ text, value: text })
+			instance.setState({ text, value: text, content: text })
 		}
 	} catch {}
 	try {
@@ -457,27 +461,27 @@ function applyText(text: string) {
 		}
 	} catch {}
 
-	const channelId = liveChannel()
-
-	// Module level handlers
+	// Module handlers
 	call(chatHandler, 'handleTextChanged')
 	for (const mod of chatModules) {
 		call(mod, 'changeText')
 		call(mod, 'setText')
 		call(mod, 'handleTextChanged')
-		callWithChannel(mod, 'changeText', channelId)
-		callWithChannel(mod, 'setText', channelId)
+		call(mod, 'updateText')
+		callAny(mod, 'changeText', [channelId, text], [text])
+		callAny(mod, 'setText', [channelId, text], [text])
+		callAny(mod, 'updateText', [channelId, text], [text])
 	}
 	for (const mod of setterModules) {
 		call(mod, 'setText')
-		call(mod, 'clearText') // may be no-op for replace, but harmless to try? no, clear would empty; skip clear logic
+		callAny(mod, 'setText', [channelId, text], [text])
 	}
 	for (const mod of insertModules) {
 		call(mod, 'insertText')
-		// insertText usually appends; not a replace, but try anyway
+		callAny(mod, 'insertText', [text], [channelId, text])
 	}
 
-	// Draft stores and flux
+	// Draft stores
 	const allDrafts = new Set<any>(draftModules)
 	try {
 		const ds = store('DraftStore')
@@ -485,53 +489,84 @@ function applyText(text: string) {
 	} catch {}
 	for (const ds of allDrafts) {
 		if (!ds || !channelId) continue
-		try {
-			if (typeof ds.saveDraft === 'function') ds.saveDraft(channelId, text, 0)
-		} catch {}
-		try {
-			if (typeof ds.changeDraft === 'function')
-				ds.changeDraft(channelId, text, 0)
-		} catch {}
-		try {
-			if (typeof ds.changeDraft === 'function') ds.changeDraft(channelId, text)
-		} catch {}
-	}
-
-	// Flux dispatch for draft change
-	try {
-		const dispatcher = fluxDispatcher ?? store('FluxDispatcher' as any)
-		if (dispatcher && typeof dispatcher.dispatch === 'function' && channelId) {
+		for (const key of ['saveDraft', 'changeDraft', 'updateDraft', 'setDraft']) {
 			try {
-				dispatcher.dispatch({ type: 'DRAFT_CHANGE', channelId, draft: text })
-			} catch {}
-			try {
-				dispatcher.dispatch({ type: 'DRAFT_SAVE', channelId, draft: text })
+				const fn = ds?.[key]
+				if (typeof fn !== 'function') continue
+				try {
+					fn.call(ds, channelId, text, 0)
+				} catch {}
+				try {
+					fn.call(ds, channelId, text)
+				} catch {}
+				try {
+					fn.call(ds, { channelId, draft: text })
+				} catch {}
 			} catch {}
 		}
-	} catch {}
+	}
 
-	// ComponentDispatch attempts (insert-oriented; may not replace, but worth trying)
+	// Flux dispatchers
+	const dispatchers = new Set<any>()
+	if (fluxDispatcher) dispatchers.add(fluxDispatcher)
+	try {
+		const s = store('FluxDispatcher' as any)
+		if (s) dispatchers.add(s)
+	} catch {}
+	for (const dispatcher of dispatchers) {
+		if (!dispatcher || typeof dispatcher.dispatch !== 'function') continue
+		const payloads = [
+			{ type: 'DRAFT_CHANGE', channelId, draft: text },
+			{ type: 'DRAFT_CHANGE', channelId, draft: text, timestamp: 0 },
+			{ type: 'DRAFT_SAVE', channelId, draft: text },
+			{ type: 'DRAFT_SAVE', channelId, draft: text, timestamp: 0 },
+			{ type: 'TEXT_CHANGED', channelId, text },
+			{ type: 'CHANNEL_TEXT_AREA_UPDATE', channelId, text },
+		]
+		for (const payload of payloads) {
+			try {
+				dispatcher.dispatch(payload)
+			} catch {}
+		}
+	}
+
+	// ComponentDispatch
 	const dispatch = getDispatchFn()
 	if (dispatch) {
-		const payloads = [
+		const insertPayloads = [
 			{ content: text },
 			{ plainText: text },
 			{ text },
 			{ content: text, plainText: text },
+			{ content: text, channelId },
+			{ plainText: text, channelId },
+			{ text, channelId },
 		]
-		for (const payload of payloads) {
+		for (const payload of insertPayloads) {
 			try {
 				dispatch('INSERT_TEXT', payload)
 			} catch {}
 		}
-		// Some builds might support SET_TEXT-like actions
-		for (const name of ['SET_TEXT', 'TEXT_CHANGED', 'REPLACE_TEXT']) {
-			for (const payload of payloads) {
+		for (const name of [
+			'SET_TEXT',
+			'TEXT_CHANGED',
+			'REPLACE_TEXT',
+			'TEXTAREA_SET_TEXT',
+			'DRAFT_CHANGE',
+		]) {
+			for (const payload of [
+				...insertPayloads,
+				{ channelId, draft: text },
+				{ channelId, text },
+			]) {
 				try {
 					dispatch(name, payload)
 				} catch {}
 			}
 		}
+		try {
+			dispatch('TEXTAREA_FOCUS', { channelId })
+		} catch {}
 	}
 }
 
@@ -541,7 +576,7 @@ function diagnose(
 	ok: boolean,
 	expected?: string,
 ) {
-	const clip = (value: unknown, max = 8) => {
+	const clip = (value: unknown, max = 10) => {
 		try {
 			const text = value === undefined || value === null ? '-' : String(value)
 			return text.length > max ? `${text.slice(0, max)}…` : text
@@ -563,7 +598,9 @@ function diagnose(
 						? props.value
 						: props?.defaultValue != null
 							? `d:${props.defaultValue}`
-							: '-'
+							: instance?.state?.text != null
+								? `s:${instance.state.text}`
+								: '-'
 				const nativeCandidates = [
 					refTarget(props?.ref ?? el?.ref),
 					refTarget(instance?._inputRef),
@@ -603,7 +640,7 @@ function diagnose(
 					variant: 'default',
 				})
 			} catch {}
-		}, 400)
+		}, 450)
 	} catch {}
 }
 
