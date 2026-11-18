@@ -34,6 +34,9 @@ const mounted = new WeakSet<object>()
 let mountNotified = false
 let scanCount = 0
 let viewPatchCount = 0
+let renderChecks = 0
+let flexSeen = 0
+let navSeen = 0
 
 function diag(text: string) {
 	try {
@@ -115,6 +118,7 @@ function isRootProps(props: any): boolean {
 	) {
 		return false
 	}
+	flexSeen++
 
 	const children = props.children
 	const list = Array.isArray(children)
@@ -122,7 +126,9 @@ function isRootProps(props: any): boolean {
 		: children != null
 			? [children]
 			: []
-	return list.some(isNavStack) || isNavStack(props)
+	const nav = list.some(isNavStack) || isNavStack(props)
+	if (nav) navSeen++
+	return nav
 }
 
 /**
@@ -188,6 +194,7 @@ function mountInto(props: any) {
 /** Checks the props of a `View` render and injects when it is the root. */
 function mountProps(props: any) {
 	try {
+		renderChecks++
 		if (isRootProps(props)) mountInto(props)
 	} catch {}
 }
@@ -302,6 +309,9 @@ function patchComponent(
 function install(cleanup: Cleanup) {
 	scanCount = 0
 	viewPatchCount = 0
+	renderChecks = 0
+	flexSeen = 0
+	navSeen = 0
 	mountNotified = false
 	const scan = (namespace: unknown) => {
 		try {
@@ -329,7 +339,9 @@ function install(cleanup: Cleanup) {
 	try {
 		setTimeout(() => {
 			if (!mountNotified)
-				diag(`no mount (scans=${scanCount} patches=${viewPatchCount})`)
+				diag(
+					`no mount s=${scanCount} p=${viewPatchCount} r=${renderChecks} f=${flexSeen} n=${navSeen}`,
+				)
 		}, 4000)
 	} catch {}
 }
