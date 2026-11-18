@@ -71,22 +71,22 @@ function flattenStyle(style: unknown, out: unknown[] = []): unknown[] {
 function isNavStack(node: any): boolean {
 	if (!node || typeof node !== 'object') return false
 
+	const type = node.type
+	const name = type?.name ?? type?.displayName ?? ''
+	if (name === 'NativeStackViewInner') return true
+
 	const state = node.props?.state
 	if (state && typeof state === 'object') {
 		const names = state.routeNames
-		if (Array.isArray(names) && names.includes('main') && names.length >= 2) {
-			return true
+		if (Array.isArray(names)) {
+			if (names.includes('main') && names.includes('modal')) return true
+			if (names.includes('main') && names.length >= 2) return true
 		}
-		if (Array.isArray(state.routes) && typeof state.index === 'number') {
+		if (Array.isArray(state.routes) && typeof state.index === 'number')
 			return true
-		}
 	}
 
-	const type = node.type
-	return (
-		type?.name === 'NativeStackViewInner' ||
-		type?.displayName === 'NativeStackViewInner'
-	)
+	return false
 }
 
 /** Whether this element is the app root view holding the navigation stack. */
@@ -103,11 +103,12 @@ function isRootProps(props: any): boolean {
 	}
 
 	const children = props.children
-	const list = Array.isArray(children) ? children : [children]
-	if (list.some(isNavStack)) return true
-
-	// The root view itself may carry the navigation state.
-	return isNavStack(props)
+	const list = Array.isArray(children)
+		? children
+		: children != null
+			? [children]
+			: []
+	return list.some(isNavStack) || isNavStack(props)
 }
 
 /**
