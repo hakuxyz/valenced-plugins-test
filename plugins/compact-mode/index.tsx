@@ -217,7 +217,20 @@ function displayName(out: any, raw: any): string {
 	if (name && name === authorName) {
 		name = raw?.nick ?? raw?.author?.globalName ?? name
 	}
-	return String(name ?? '')
+
+	if (!name) {
+		name =
+			raw?.author?.globalName ??
+			raw?.nick ??
+			out?.nick ??
+			out?.author?.globalName ??
+			raw?.authorId ??
+			raw?.author?.id ??
+			out?.author?.id ??
+			''
+	}
+
+	return String(name || 'Unknown')
 }
 
 function usernameLinkNode(
@@ -252,15 +265,35 @@ function usernameLinkNode(
 
 function usernameNode(out: any, raw: any): AstNode {
 	const userId = raw?.author?.id ?? raw?.authorId ?? out?.author?.id
-	const linkColor = toColorInt(
-		out?.colorString ?? raw?.colorString,
-		out?.usernameColor ?? raw?.usernameColor ?? BRAND_COLOR,
-	)
+	const colorString = out?.colorString ?? raw?.colorString
+	let linkColor: number
+	if (typeof colorString === 'string' && colorString) {
+		try {
+			// Match mirror.compactmode: process hex color strings through RN.
+			const { processColor } = require('react-native') as {
+				processColor?: (color: unknown) => unknown
+			}
+			const processed = processColor?.(colorString)
+			if (typeof processed === 'number') linkColor = processed
+			else linkColor = toColorInt(colorString, BRAND_COLOR)
+		} catch {
+			linkColor = toColorInt(colorString, BRAND_COLOR)
+		}
+	} else {
+		linkColor = toColorInt(
+			out?.usernameColor ?? raw?.usernameColor ?? colorString,
+			BRAND_COLOR,
+		)
+	}
 	return usernameLinkNode(
 		displayName(out, raw),
 		userId,
 		linkColor,
-		raw?.channelId ?? out?.channelId ?? out?.channel_id ?? '0',
+		raw?.channelId ??
+			raw?.channel_id ??
+			out?.channelId ??
+			out?.channel_id ??
+			'0',
 	)
 }
 
