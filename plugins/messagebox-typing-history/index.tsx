@@ -74,16 +74,20 @@ let latestInputProps: any
 let refHolderRef: any
 /** Callback ref seen for the chat input, captured when invoked. */
 let callbackRefSeen = false
-/** Chat input module, used as a writer when the tree does not reach one. */
-let chatModule: any
+/** Modules that can write text to the chat input. */
+const chatModules = new Set<any>()
 /** Module that owns `handleTextChanged`, observed and used as a writer. */
 let chatHandler: any
-/** Module that inserts text into the box, found for the diagnostics only. */
-let insertModule: any
-/** Module that sets or clears the box text, found for the diagnostics only. */
-let setterModule: any
-/** Draft store module, used as an alternate writer on some builds. */
-let draftModule: any
+/** Modules that may insert text. */
+const insertModules = new Set<any>()
+/** Modules that may set/clear text. */
+const setterModules = new Set<any>()
+/** Draft store modules. */
+const draftModules = new Set<any>()
+/** ComponentDispatch-like modules. */
+let componentDispatch: any
+/** Flux dispatcher module. */
+let fluxDispatcher: any
 /** Every input element in the message box subtree, all of them live. */
 let latestInputs: any[] = []
 /** Channel the latest render belongs to. */
@@ -96,22 +100,9 @@ let guardActive = false
 /** Set by the last `decorate` call when it found a place for the pill. */
 let injected = false
 
-/**
- * The only keys `findInTree` may descend into.
- *
- * Without this it walks every own key, and a React element exposes `_owner`,
- * `ref` and `type` right next to `props`. `_owner` is a fiber, and a fiber
- * links to `child`, `sibling`, `return` and `alternate`, so the walk escapes
- * into the whole application tree on every render and saturates the JS
- * thread. Restricting the walk to the element tree keeps it linear and
- * makes the fiber graph unreachable.
- */
 const WALKABLE = new Set(['props', 'children'])
-
-/** Search depth of the bounded walk, generous for deep input subtrees. */
 const MAX_FIND_DEPTH = 80
 
-/** `findInTree` only narrows for type guards, so wrap every search. */
 function findNode(tree: any, predicate: (node: any) => boolean): any {
 	return findInTree(
 		tree,
@@ -141,14 +132,6 @@ function typeName(node: any): string {
 	return ''
 }
 
-/**
- * Structural match for the message box input. Minified builds drop
- * `displayName`, so the shape of the props is what identifies it.
- *
- * The React Native `TextInput` is matched by identity or by name as well:
- * the real message box does not always carry an `onChangeText` of its own,
- * and without a match there would be no write path at all.
- */
 function isInputNode(node: any): boolean {
 	if (!node || typeof node !== 'object') return false
 	const props = node.props
@@ -156,7 +139,7 @@ function isInputNode(node: any): boolean {
 	if (node.type === TextInput) return true
 	const name = typeName(node)
 	if (name === 'TextInput' || name.startsWith('TextInput')) return true
-	if (typeof props.onChangeText !== 'function') return false
+	if (typeof props.onChangeText === 'function') return false
 	return name !== 'View' && name !== 'RCTView' && name !== 'Text'
 }
 
@@ -185,7 +168,6 @@ function channelFrom(...candidates: any[]): string | undefined {
 	return undefined
 }
 
-/** Channel of the box we last rendered, used while recording keystrokes. */
 function liveChannel(): string {
 	const instance = resolveInstance()
 	return channelFor(
@@ -205,12 +187,7 @@ interface Located {
 	host: any
 }
 
-/**
- * Walks the render result to the message box input while remembering the
- * ancestors, so both the row and the responder host can be resolved.
- */
 function locate(node: any, ancestors: any[], depth = 0): Located | undefined {
-	// Only `props.children` is ever followed, so this stays linear.
 	if (node == null || depth > MAX_FIND_DEPTH) return undefined
 
 	if (Array.isArray(node)) {
@@ -243,16 +220,8 @@ function locate(node: any, ancestors: any[], depth = 0): Located | undefined {
 	return found
 }
 
-/** Marks an object whose handler is already observed. */
 const observed = new WeakSet<object>()
 
-/**
- * Observes typing through `handleTextChanged` on whatever object holds it.
- *
- * Reading keystrokes this way survives minification, which is why the known
- * chat plugins use the same hook. The receiver is left untouched, so the
- * original call keeps working exactly as before.
- */
 function observeHandler(target: any): (() => void) | undefined {
 	if (
 		!target ||
@@ -267,7 +236,6 @@ function observeHandler(target: any): (() => void) | undefined {
 				const text = args?.[0]
 				if (typeof text === 'string') record(liveChannel(), text)
 			} catch {}
-			// Valenced replaces the call arguments with the return value.
 			return args
 		})
 		observed.add(target)
@@ -280,7 +248,6 @@ function observeHandler(target: any): (() => void) | undefined {
 	}
 }
 
-/** Observes typing through the instance handler, once per instance. */
 function wireInstance(instance: any) {
 	if (wired.has(instance)) return
 	const unpatch = observeHandler(instance)
@@ -292,14 +259,6 @@ function wireInstance(instance: any) {
 	})
 }
 
-/**
- * Records keystrokes through the input's own `onChangeText`.
- *
- * This is the path that works without an instance, which matters because the
- * ref is empty during the first render. The handler is wrapped in place, once
- * per original function, and the original is called unchanged with whatever
- * receiver it was called with before.
- */
 function wireInput(inputProps: any) {
 	try {
 		const original = inputProps?.onChangeText
@@ -322,12 +281,6 @@ function wireInput(inputProps: any) {
 	} catch {}
 }
 
-/**
- * Resolves the chat input instance when it is actually needed.
- *
- * Prefers an object that really exposes the handler, so a callback ref or a
- * native input handle can never be mistaken for it.
- */
 function resolveInstance(): any {
 	const candidates = [
 		refTarget(refHolderRef),
@@ -348,15 +301,6 @@ function resolveInstance(): any {
 	return fallback
 }
 
-/**
- * Collects every input element in the message box subtree.
- *
- * The node `locate` returns is the outermost match, and that is not always
- * the handler Discord actually calls, so all of them are recorded through
- * and written to. The elements themselves are kept, not their props: an
- * input without an `onChangeText` is still a place the text can live, and
- * dropping it would hide that from the diagnostics.
- */
 function collectInputs(node: any, out: any[], depth = 0) {
 	if (node == null || depth > MAX_FIND_DEPTH) return
 	if (Array.isArray(node)) {
@@ -383,15 +327,30 @@ function collectInputs(node: any, out: any[], depth = 0) {
 	if (props.children != null) collectInputs(props.children, out, depth + 1)
 }
 
-/**
- * Writes a history entry back into the message box.
- *
- * The text can be reached through the input handlers, through the instance
- * behind `chatInputRef` and through the chat input modules, and which of them
- * is alive depends on when the last render happened. Every path that exists
- * is called with the same text: they all mean "the text is now this", each
- * one is guarded, and calling more than one is harmless.
- */
+function remember(module: any, set: Set<any>) {
+	if (!module || (typeof module !== 'object' && typeof module !== 'function'))
+		return
+	set.add(module)
+}
+
+function getDispatchFn(): ((name: string, payload: any) => void) | undefined {
+	const candidates = [
+		componentDispatch,
+		componentDispatch?.ComponentDispatch,
+		componentDispatch?.default,
+		componentDispatch?.default?.ComponentDispatch,
+	]
+	for (const cand of candidates) {
+		try {
+			if (cand && typeof cand.dispatchToLastSubscribed === 'function') {
+				return (name: string, payload: any) =>
+					cand.dispatchToLastSubscribed(name, payload)
+			}
+		} catch {}
+	}
+	return undefined
+}
+
 function applyText(text: string) {
 	const called = new Set<unknown>()
 
@@ -404,16 +363,60 @@ function applyText(text: string) {
 		} catch {}
 	}
 
+	const callWithChannel = (owner: any, key: string, channelId: string) => {
+		try {
+			const fn = owner?.[key]
+			if (typeof fn !== 'function' || called.has(fn)) return
+			called.add(fn)
+			// try (channelId, text) and (text)
+			try {
+				fn.call(owner, channelId, text)
+			} catch {}
+			try {
+				fn.call(owner, text)
+			} catch {}
+		} catch {}
+	}
+
 	const setNative = (target: any) => {
 		try {
 			const t = refTarget(target)
 			if (!t || typeof t !== 'object' || called.has(t)) return
+			called.add(t)
 			if (typeof t.setNativeProps === 'function') {
-				called.add(t)
-				t.setNativeProps({ text })
+				try {
+					t.setNativeProps({ text })
+				} catch {}
+			}
+			if (
+				typeof t.focus === 'function' &&
+				typeof t.setNativeProps === 'function'
+			) {
+				// keep focus state; some inputs need it
 			}
 		} catch {}
 	}
+
+	// TextInput.State focused input (RN)
+	try {
+		const state = (TextInput as any)?.State
+		if (state) {
+			const focusedId =
+				typeof state.currentlyFocusedField === 'function'
+					? state.currentlyFocusedField()
+					: undefined
+			const focusedInput =
+				typeof state.currentlyFocusedInput === 'function'
+					? state.currentlyFocusedInput()
+					: undefined
+			if (focusedInput) setNative(focusedInput)
+			if (focusedId && typeof (state as any).getTextInputRef === 'function') {
+				try {
+					setNative((state as any).getTextInputRef(focusedId))
+				} catch {}
+			}
+		}
+	} catch {}
 
 	// What the visible input is driven by: every handler of the subtree.
 	for (const el of latestInputs) {
@@ -436,11 +439,13 @@ function applyText(text: string) {
 		instance?.props?.inputRef,
 		instance?.props?.textInputRef,
 		refTarget(refHolderRef),
+		latestInputProps?.chatInputRef,
+		latestInputProps?.inputRef,
+		latestInputProps?.textInputRef,
 	]) {
 		setNative(ref)
 	}
 
-	// Last resort: some class inputs keep their text in component state.
 	try {
 		if (instance && typeof instance.setState === 'function') {
 			instance.setState({ text, value: text })
@@ -452,35 +457,84 @@ function applyText(text: string) {
 		}
 	} catch {}
 
-	// The module level handlers, which do not depend on any render.
-	call(chatHandler, 'handleTextChanged')
-	call(chatModule, 'changeText')
-	call(setterModule, 'setText')
-	call(insertModule, 'insertText')
-
 	const channelId = liveChannel()
+
+	// Module level handlers
+	call(chatHandler, 'handleTextChanged')
+	for (const mod of chatModules) {
+		call(mod, 'changeText')
+		call(mod, 'setText')
+		call(mod, 'handleTextChanged')
+		callWithChannel(mod, 'changeText', channelId)
+		callWithChannel(mod, 'setText', channelId)
+	}
+	for (const mod of setterModules) {
+		call(mod, 'setText')
+		call(mod, 'clearText') // may be no-op for replace, but harmless to try? no, clear would empty; skip clear logic
+	}
+	for (const mod of insertModules) {
+		call(mod, 'insertText')
+		// insertText usually appends; not a replace, but try anyway
+	}
+
+	// Draft stores and flux
+	const allDrafts = new Set<any>(draftModules)
 	try {
-		const stores = [draftModule, store('DraftStore')]
-		for (const ds of stores) {
-			if (!ds || !channelId) continue
+		const ds = store('DraftStore')
+		if (ds) allDrafts.add(ds)
+	} catch {}
+	for (const ds of allDrafts) {
+		if (!ds || !channelId) continue
+		try {
+			if (typeof ds.saveDraft === 'function') ds.saveDraft(channelId, text, 0)
+		} catch {}
+		try {
+			if (typeof ds.changeDraft === 'function')
+				ds.changeDraft(channelId, text, 0)
+		} catch {}
+		try {
+			if (typeof ds.changeDraft === 'function') ds.changeDraft(channelId, text)
+		} catch {}
+	}
+
+	// Flux dispatch for draft change
+	try {
+		const dispatcher = fluxDispatcher ?? store('FluxDispatcher' as any)
+		if (dispatcher && typeof dispatcher.dispatch === 'function' && channelId) {
 			try {
-				if (typeof ds.saveDraft === 'function') {
-					ds.saveDraft(channelId, text, 0)
-				} else if (typeof ds.changeDraft === 'function') {
-					ds.changeDraft(channelId, text, 0)
-				}
+				dispatcher.dispatch({ type: 'DRAFT_CHANGE', channelId, draft: text })
+			} catch {}
+			try {
+				dispatcher.dispatch({ type: 'DRAFT_SAVE', channelId, draft: text })
 			} catch {}
 		}
 	} catch {}
+
+	// ComponentDispatch attempts (insert-oriented; may not replace, but worth trying)
+	const dispatch = getDispatchFn()
+	if (dispatch) {
+		const payloads = [
+			{ content: text },
+			{ plainText: text },
+			{ text },
+			{ content: text, plainText: text },
+		]
+		for (const payload of payloads) {
+			try {
+				dispatch('INSERT_TEXT', payload)
+			} catch {}
+		}
+		// Some builds might support SET_TEXT-like actions
+		for (const name of ['SET_TEXT', 'TEXT_CHANGED', 'REPLACE_TEXT']) {
+			for (const payload of payloads) {
+				try {
+					dispatch(name, payload)
+				} catch {}
+			}
+		}
+	}
 }
 
-/**
- * Reports what an undo or redo attempt did.
- *
- * The app cannot be debugged from outside, so the state of every write path
- * goes into a toast a moment later, once React had the chance to render the
- * new text. Kept short on purpose: toasts truncate long text.
- */
 function diagnose(
 	action: string,
 	channelId: string,
@@ -534,12 +588,14 @@ function diagnose(
 						? 'i1'
 						: 'i0',
 					chatHandler ? 'h1' : 'h0',
-					chatModule ? 'm1' : 'm0',
-					insertModule ? 's1' : 's0',
-					setterModule ? 't1' : 't0',
+					chatModules.size > 0 ? 'm1' : 'm0',
+					insertModules.size > 0 ? 's1' : 's0',
+					setterModules.size > 0 ? 't1' : 't0',
 					hasNative ? 'r1' : 'r0',
-					draftModule ? 'g1' : 'g0',
+					draftModules.size > 0 ? 'g1' : 'g0',
 					callbackRefSeen ? 'c1' : 'c0',
+					getDispatchFn() ? 'x1' : 'x0',
+					fluxDispatcher ? 'f1' : 'f0',
 				].join('')
 				const want = expected === undefined ? '-' : clip(expected)
 				ToastActionCreators.open('HAKUXYZ_TYPING_HISTORY_DIAG', {
@@ -551,14 +607,6 @@ function diagnose(
 	} catch {}
 }
 
-/**
- * Injects the pill, observes typing and wires up the gestures.
- *
- * The tree is only touched when it can be proven to be the message box:
- * either the input element itself or the `chatInputRef` holder must be
- * present. Anything else is returned untouched, so a wrong module match
- * can never break an unrelated screen.
- */
 function decorate(result: any, allowInject: boolean): any {
 	injected = false
 	try {
@@ -575,7 +623,6 @@ function decorate(result: any, allowInject: boolean): any {
 			result,
 			node => node?.props?.chatInputRef != null,
 		)
-		// Not the message box: never mutate or wire anything.
 		if (!located && !refHolder) return result
 
 		const inputs: any[] = []
@@ -589,8 +636,6 @@ function decorate(result: any, allowInject: boolean): any {
 		}
 
 		if (located) pushInputs(located.input)
-		// When the guard only exposes a ref holder, search its subtree and the
-		// whole result: the real input may sit outside the located branch.
 		if (inputs.length === 0 && refHolder) pushInputs(refHolder)
 		if (inputs.length === 0) {
 			const found = findNode(result, node => {
@@ -612,15 +657,11 @@ function decorate(result: any, allowInject: boolean): any {
 		}
 		if (inputs.length === 0) pushInputs(result)
 
-		// Keep the last known set: a later render without an input in view
-		// must not take the write paths away.
 		if (inputs.length > 0) latestInputs = inputs
 		const inputEl = inputs[0] ?? located?.input
 		const inputProps = inputEl?.props ?? located?.input?.props
 		if (inputProps) latestInputProps = inputProps
 
-		// Keep the ref object, not its value: the value only exists after the
-		// children mounted, and this component may never render again.
 		const refs = [
 			refHolder?.props?.chatInputRef,
 			inputProps?.chatInputRef,
@@ -648,7 +689,6 @@ function decorate(result: any, allowInject: boolean): any {
 				}
 				;(wrapper as any)[WRAPPED] = true
 				try {
-					// Replace where we can reach it.
 					if (refHolder?.props?.chatInputRef === ref)
 						refHolder.props.chatInputRef = wrapper
 					else if (inputProps?.chatInputRef === ref)
@@ -680,11 +720,6 @@ function decorate(result: any, allowInject: boolean): any {
 		)
 
 		if (allowInject) {
-			// Prefer the component root once `chatInputRef` proved this is the
-			// message box (the target the known plugins inject into), then the
-			// row that directly holds the input. Only array children are ever
-			// touched, and the pill is appended so existing `children[0]`
-			// consumers keep working.
 			const row =
 				refHolder && Array.isArray(result?.props?.children)
 					? result
@@ -736,7 +771,6 @@ function install(
 	if (!target || seen.has(target)) return
 	seen.add(target)
 
-	// Class component: render() takes no props, the tree holds them.
 	if (
 		typeof target === 'function' &&
 		typeof target.prototype?.render === 'function'
@@ -746,7 +780,6 @@ function install(
 		const unpatch = afterLoose(proto, 'render', result =>
 			decorate(result, !guardActive),
 		)
-		// Keystrokes, independent of which instance holds the ref.
 		const unobserve = observeHandler(proto)
 		cleanup(() => {
 			unpatch()
@@ -757,7 +790,6 @@ function install(
 		return
 	}
 
-	// Plain function component: patch it on whatever holds the reference.
 	if (typeof target === 'function') {
 		const unpatch = afterLoose(ns, key, result =>
 			decorate(result, !guardActive),
@@ -769,7 +801,6 @@ function install(
 		return
 	}
 
-	// forwardRef wrapper.
 	if (target && typeof target === 'object') {
 		if (typeof target.render === 'function') {
 			const ref = target as unknown as Record<string, AnyFunction>
@@ -782,7 +813,6 @@ function install(
 			})
 			return
 		}
-		// memo wrapper: patch the inner type through the memo object.
 		if (target.type) {
 			seen.delete(target)
 			install(
@@ -805,11 +835,6 @@ function scan(namespace: unknown, cleanup: Cleanup) {
 	} catch {}
 }
 
-/**
- * Patches the guard wrapper around the message box. This is the reliable
- * entry point: its render result carries `chatInputRef`, which exposes the
- * input instance regardless of how the inner components are minified.
- */
 function scanGuard(namespace: unknown, cleanup: Cleanup) {
 	try {
 		const ns = namespace as Record<string, any> | null
@@ -846,8 +871,6 @@ function scanGuard(namespace: unknown, cleanup: Cleanup) {
 
 function bootstrap(cleanup: Cleanup, storage: any) {
 	register = cleanup
-	// Read the storage on every access: `cache` is replaced when the document
-	// loads or is written to, so it must not be captured once here.
 	setSettingsGetter(() => ({
 		...DefaultSettings,
 		...(storage?.cache ?? {}),
@@ -859,87 +882,113 @@ function bootstrap(cleanup: Cleanup, storage: any) {
 	setApplier(applyText)
 	setReporter(diagnose)
 
-	// Module level handlers: they keep working across a remount of the input.
 	cleanup(
 		getModules(
 			withProps('handleTextChanged'),
 			module => {
 				chatHandler ??= module
+				remember(module, chatModules)
 				const unpatch = observeHandler(module)
 				if (unpatch) cleanup(unpatch)
 			},
-			{ max: 3 },
+			{ max: 5 },
 		),
 	)
 	cleanup(
 		getModules(
 			withProps('handleSendMessage', 'changeText'),
 			module => {
-				chatModule ??= module
+				remember(module, chatModules)
 			},
-			{ max: 1 },
+			{ max: 3 },
 		),
 	)
 	cleanup(
 		getModules(
 			withProps('changeText'),
 			module => {
-				chatModule ??= module
+				remember(module, chatModules)
 			},
-			{ max: 3 },
+			{ max: 5 },
 		),
 	)
-	// Diagnostics / alternate writers: modules that can write into the box.
 	cleanup(
 		getModules(
 			withProps('selectGIF', 'insertText'),
 			module => {
-				insertModule ??= module
+				remember(module, insertModules)
 			},
-			{ max: 1 },
+			{ max: 2 },
 		),
 	)
 	cleanup(
 		getModules(
 			withProps('insertText'),
 			module => {
-				insertModule ??= module
+				remember(module, insertModules)
 			},
-			{ max: 3 },
+			{ max: 5 },
 		),
 	)
 	cleanup(
 		getModules(
 			withProps('setText', 'clearText'),
 			module => {
-				setterModule ??= module
+				remember(module, setterModules)
 			},
-			{ max: 3 },
+			{ max: 5 },
 		),
 	)
 	cleanup(
 		getModules(
 			withProps('setText'),
 			module => {
-				setterModule ??= module
+				remember(module, setterModules)
 			},
-			{ max: 3 },
+			{ max: 5 },
 		),
 	)
 	cleanup(
 		getModules(
 			withProps('getDraft', 'saveDraft'),
 			module => {
-				draftModule ??= module
+				remember(module, draftModules)
 			},
-			{ max: 1 },
+			{ max: 2 },
 		),
 	)
 	cleanup(
 		getModules(
 			withProps('getDraft', 'changeDraft'),
 			module => {
-				draftModule ??= module
+				remember(module, draftModules)
+			},
+			{ max: 2 },
+		),
+	)
+	cleanup(
+		getModules(
+			withProps('dispatchToLastSubscribed'),
+			module => {
+				componentDispatch ??= module
+			},
+			{ max: 2 },
+		),
+	)
+	cleanup(
+		getModules(
+			withProps('ComponentDispatch'),
+			module => {
+				componentDispatch ??= module
+			},
+			{ max: 2 },
+		),
+	)
+	cleanup(
+		getModules(
+			withProps('dispatch', 'subscribe', 'isDispatching'),
+			module => {
+				fluxDispatcher ??= module
 			},
 			{ max: 1 },
 		),
