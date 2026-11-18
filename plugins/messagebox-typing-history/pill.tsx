@@ -86,7 +86,7 @@ const GAP = 6
 /** Snapshot is a string so React can compare it by value. */
 function snapshot(channelId: string) {
 	const settings = currentSettings()
-	return `${settings.buttons ? 1 : 0}${settings.gestures ? 1 : 0}${settings.size}${canUndo(channelId) ? 1 : 0}${canRedo(channelId) ? 1 : 0}`
+	return `${settings.buttons ? 1 : 0}${settings.gestures ? 1 : 0}${settings.size}${settings.pillVisibility}${canUndo(channelId) ? 1 : 0}${canRedo(channelId) ? 1 : 0}`
 }
 
 function Button({
@@ -148,6 +148,13 @@ export default function TypingHistoryPill({ channelId }: Props) {
 
 	const canGoBack = state[state.length - 2] === '1'
 	const canGoForward = state[state.length - 1] === '1'
+
+	if (
+		settings.pillVisibility === 'whenAvailable' &&
+		!canGoBack &&
+		!canGoForward
+	)
+		return null
 
 	const run = (action: 'undo' | 'redo') => {
 		const channel = channelFor(channelId)

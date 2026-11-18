@@ -49,6 +49,15 @@ export default function SettingsComponent({
 					<TableRadioRow label="Large" value="large" />
 					<TableRadioRow label="Extra large" value="extraLarge" />
 				</TableRadioGroup>
+
+				<TableRadioGroup
+					title="Visibility"
+					value={settings.pillVisibility}
+					onChange={pillVisibility => storage.set({ pillVisibility })}
+				>
+					<TableRadioRow label="Always" value="always" />
+					<TableRadioRow label="Only when available" value="whenAvailable" />
+				</TableRadioGroup>
 			</Page>
 		</ScrollView>
 	)

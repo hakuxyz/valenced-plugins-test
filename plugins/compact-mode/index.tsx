@@ -223,23 +223,12 @@ function displayName(out: any, raw: any): string {
 function usernameNode(out: any, raw: any): AstNode {
 	const color = toColorInt(out?.colorString, out?.usernameColor ?? BRAND_COLOR)
 	return {
-		content: [
-			{
-				content: [{ content: displayName(out, raw), type: 'text' }],
-				type: 'strong',
-			},
-		],
-		type: 'link',
-		target: 'usernameOnClick',
-		context: {
-			username: true,
-			usernameOnClick: {
-				action: 'bindTapUsername',
-				userId: raw?.author?.id ?? out?.author?.id,
-				linkColor: color,
-				messageChannelId: out?.channelId ?? raw?.channelId ?? raw?.channel_id,
-			},
-		},
+		content: [{ content: displayName(out, raw), type: 'text' }],
+		type: 'mention',
+		userId: raw?.authorId ?? raw?.author?.id ?? out?.author?.id,
+		color,
+		roleColor: color,
+		colorString: hexColor(color),
 	}
 }
 
@@ -315,19 +304,14 @@ function hideReplyAvatar(out: any, settings: Settings): void {
 	const name = typeof reference.username === 'string' ? reference.username : ''
 	if (!name) return
 
+	const color = toColorInt(reference.colorString, reference.usernameColor)
 	const nameNode: AstNode = {
-		content: [{ content: [{ content: name, type: 'text' }], type: 'strong' }],
-		type: 'link',
-		target: 'usernameOnClick',
-		context: {
-			username: true,
-			usernameOnClick: {
-				action: 'bindTapUsername',
-				userId: reference.authorId ?? reference.author?.id ?? reference.userId,
-				linkColor: toColorInt(reference.colorString, reference.usernameColor),
-				messageChannelId: reference.channelId,
-			},
-		},
+		content: [{ content: name, type: 'text' }],
+		type: 'mention',
+		userId: reference.authorId ?? reference.author?.id ?? reference.userId,
+		color,
+		roleColor: color,
+		colorString: hexColor(color),
 	}
 
 	const parent = out.referencedMessage
@@ -363,8 +347,15 @@ function imageEmbed(attachment: any): AstNode {
 		image: {
 			url,
 			proxyURL: url,
-			width: attachment?.width,
-			height: attachment?.height,
+			width: attachment?.width ?? 0,
+			height: attachment?.height ?? 0,
+			placeholder: '',
+			placeholderVersion: 0,
+			description: '',
+			srclsAnimated: false,
+			srcIsAnimated: false,
+			flags: 0,
+			contentType: String(attachment?.contentType ?? ''),
 		},
 		fields: [],
 		borderLeftColor: 0,
