@@ -1,3 +1,4 @@
+import { ToastActionCreators } from '@valenced/discord/actions'
 import { getModules } from '@valenced/modules/finders'
 import { withProps } from '@valenced/modules/finders/filters'
 import { before, instead } from '@valenced/patcher'
@@ -30,6 +31,19 @@ const OVERLAY_KEY = 'hakuxyz-oneko-overlay'
 
 /** Props objects we already injected into, to avoid duplicates. */
 const mounted = new WeakSet<object>()
+let mountNotified = false
+let scanCount = 0
+let viewPatchCount = 0
+
+function diag(text: string) {
+	try {
+		console.log(`[Oneko] ${text}`)
+		ToastActionCreators.open('HAKUXYZ_ONEKO_DIAG', {
+			text: `[Oneko] ${text}`,
+			variant: 'default',
+		})
+	} catch {}
+}
 
 /**
  * Metro re-exports members such as `react-native`'s `View` as getters on the
@@ -121,6 +135,10 @@ function isRootProps(props: any): boolean {
 function mountInto(props: any) {
 	if (!props || typeof props !== 'object' || mounted.has(props)) return
 	mounted.add(props)
+	if (!mountNotified) {
+		mountNotified = true
+		diag('mounted')
+	}
 
 	const children = props.children
 	const list = Array.isArray(children)
@@ -229,27 +247,29 @@ function patchComponent(
 		// Class component: render() takes no props, read them from the instance.
 		if (typeof target.prototype?.render === 'function') {
 			const proto = target.prototype as unknown as Record<string, AnyFunction>
-			register(cleanup, proto, 'render', () =>
-				insteadLoose(
+			register(cleanup, proto, 'render', () => {
+				viewPatchCount++
+				return insteadLoose(
 					proto,
 					'render',
 					function (this: any, args: any[], original: AnyFunction) {
 						mountProps(this?.props)
 						return original.apply(this, args)
 					},
-				),
-			)
+				)
+			})
 			return
 		}
 		// Plain function component: the props are the first call argument.
 		ensureWritable(parent, key)
-		register(cleanup, parent, key, () =>
-			beforeLoose(parent, key, (args: any[]) => {
+		register(cleanup, parent, key, () => {
+			viewPatchCount++
+			return beforeLoose(parent, key, (args: any[]) => {
 				mountProps(args?.[0])
 				// Valenced replaces the call arguments with the return value.
 				return args
-			}),
-		)
+			})
+		})
 		return
 	}
 
@@ -257,12 +277,13 @@ function patchComponent(
 		// forwardRef wrapper: render(props, ref).
 		if (typeof target.render === 'function') {
 			const ref = target as unknown as Record<string, AnyFunction>
-			register(cleanup, ref, 'render', () =>
-				beforeLoose(ref, 'render', (args: any[]) => {
+			register(cleanup, ref, 'render', () => {
+				viewPatchCount++
+				return beforeLoose(ref, 'render', (args: any[]) => {
 					mountProps(args?.[0])
 					return args
-				}),
-			)
+				})
+			})
 			return
 		}
 		// memo wrapper: hook the inner type through the memo object.
@@ -279,12 +300,16 @@ function patchComponent(
 }
 
 function install(cleanup: Cleanup) {
+	scanCount = 0
+	viewPatchCount = 0
+	mountNotified = false
 	const scan = (namespace: unknown) => {
 		try {
 			const ns = namespace as Record<string, unknown> | null
 			if (!ns || typeof ns !== 'object') return
 			const view = ns.View
 			if (!view) return
+			scanCount++
 			patchComponent(
 				view,
 				ns as unknown as Record<string, AnyFunction>,
@@ -300,6 +325,13 @@ function install(cleanup: Cleanup) {
 	// React Native's own View export as a fallback.
 	cleanup(getModules(withProps('View', 'Text', 'Image'), scan))
 	cleanup(getModules(withProps('View', 'Text', 'Image', 'ScrollView'), scan))
+
+	try {
+		setTimeout(() => {
+			if (!mountNotified)
+				diag(`no mount (scans=${scanCount} patches=${viewPatchCount})`)
+		}, 4000)
+	} catch {}
 }
 
 export default plugin<{ jsonStorage: Settings }>({
@@ -313,6 +345,7 @@ export default plugin<{ jsonStorage: Settings }>({
 			...DefaultSettings,
 			...(jsonStorage.cache ?? {}),
 		}))
+		diag('init')
 		install(cleanup)
 	},
 	start({ cleanup, jsonStorage }) {
@@ -320,6 +353,7 @@ export default plugin<{ jsonStorage: Settings }>({
 			...DefaultSettings,
 			...(jsonStorage.cache ?? {}),
 		}))
+		diag('start')
 		install(cleanup)
 	},
 	SettingsComponent,
