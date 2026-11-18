@@ -129,6 +129,8 @@ export default function OnekoOverlay() {
 
 	if (!enabled) return null
 
+	const AnimatedView = Animated.View
+
 	return (
 		<View
 			pointerEvents="none"
@@ -142,7 +144,7 @@ export default function OnekoOverlay() {
 				}
 			}}
 		>
-			<Animated.View
+			<AnimatedView
 				style={[
 					{
 						position: 'absolute',
@@ -161,7 +163,7 @@ export default function OnekoOverlay() {
 					style={{ width: size, height: size }}
 					resizeMode="contain"
 				/>
-			</Animated.View>
+			</AnimatedView>
 		</View>
 	)
 }
