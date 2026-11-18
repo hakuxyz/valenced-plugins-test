@@ -79,6 +79,8 @@ let chatHandler: any
 let insertModule: any
 /** Module that sets or clears the box text, found for the diagnostics only. */
 let setterModule: any
+/** Draft store module, used as an alternate writer on some builds. */
+let draftModule: any
 /** Every input element in the message box subtree, all of them live. */
 let latestInputs: any[] = []
 /** Channel the latest render belongs to. */
@@ -427,6 +429,17 @@ function applyText(text: string) {
 	call(chatHandler, 'handleTextChanged')
 	call(chatModule, 'changeText')
 	call(setterModule, 'setText')
+
+	const channelId = liveChannel()
+	try {
+		if (draftModule && channelId) {
+			if (typeof draftModule.saveDraft === 'function') {
+				draftModule.saveDraft(channelId, text)
+			} else if (typeof draftModule.changeDraft === 'function') {
+				draftModule.changeDraft(channelId, text)
+			}
+		}
+	} catch {}
 }
 
 /**
@@ -493,6 +506,7 @@ function diagnose(
 					insertModule ? 's1' : 's0',
 					setterModule ? 't1' : 't0',
 					hasNative ? 'r1' : 'r0',
+					draftModule ? 'g1' : 'g0',
 				].join('')
 				const want = expected === undefined ? '-' : clip(expected)
 				ToastActionCreators.open('HAKUXYZ_TYPING_HISTORY_DIAG', {
@@ -832,6 +846,24 @@ function bootstrap(cleanup: Cleanup, storage: any) {
 				setterModule ??= module
 			},
 			{ max: 3 },
+		),
+	)
+	cleanup(
+		getModules(
+			withProps('getDraft', 'saveDraft'),
+			module => {
+				draftModule ??= module
+			},
+			{ max: 1 },
+		),
+	)
+	cleanup(
+		getModules(
+			withProps('getDraft', 'changeDraft'),
+			module => {
+				draftModule ??= module
+			},
+			{ max: 1 },
 		),
 	)
 	cleanup(
