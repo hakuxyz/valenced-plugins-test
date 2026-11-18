@@ -97,20 +97,12 @@ function isNavStack(node: any): boolean {
 	if (
 		name === 'NativeStackViewInner' ||
 		name === 'App' ||
-		name === 'NavigationContainer' ||
-		name === 'ScreenStack' ||
-		name === 'RNSScreenStack'
+		name === 'NavigationContainer'
 	)
 		return true
 
-	if (typeof name === 'string') {
-		if (
-			name.includes('Navigator') ||
-			name.includes('NavigationContainer') ||
-			name.includes('ScreenStack')
-		)
-			return true
-	}
+	if (typeof name === 'string' && name.includes('NavigationContainer'))
+		return true
 
 	const state = node.props?.state
 	if (state && typeof state === 'object') {
