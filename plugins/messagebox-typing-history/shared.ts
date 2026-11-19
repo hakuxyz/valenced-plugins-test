@@ -1,12 +1,10 @@
 export type ButtonSize = 'small' | 'normal' | 'large' | 'extraLarge'
 export type PillVisibility = 'always' | 'whenAvailable'
 /** Where the undo and redo pill sits around the message box. */
-export type ButtonPosition =
-	| 'right'
-	| 'center'
-	| 'left'
-	| 'rightEdge'
-	| 'leftEdge'
+export type ButtonPosition = 'right' | 'center' | 'left'
+
+/** Valid positions, also used to discard stale stored values. */
+export const ButtonPositions: ButtonPosition[] = ['right', 'center', 'left']
 
 export interface Settings {
 	/** Show the undo and redo pill next to the message box. */

@@ -83,21 +83,18 @@ const METRICS: Record<ButtonSize, Metrics> = {
 
 /** Gap between the pill and the message box, same for every size. */
 const GAP = 6
-/** Inset used by the aligned positions, matching the message box padding. */
+/** Inset matching the message box padding. */
 const INSET = 16
 
 /** Horizontal placement of the pill above the message box. */
 function positionStyle(position: ButtonPosition, metrics: Metrics): ViewStyle {
-	const halfWidth = metrics.width + metrics.padH + 0.5
 	switch (position) {
 		case 'left':
 			return { left: INSET }
-		case 'center':
+		case 'center': {
+			const halfWidth = metrics.width + metrics.padH + 0.5
 			return { left: '50%', transform: [{ translateX: -halfWidth }] }
-		case 'rightEdge':
-			return { right: 0 }
-		case 'leftEdge':
-			return { left: 0 }
+		}
 		default:
 			return { right: INSET }
 	}
