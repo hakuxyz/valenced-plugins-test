@@ -32,7 +32,7 @@ export default function SettingsComponent({
 					/>
 					<TableSwitchRow
 						label="Freeze member list"
-						subLabel="Stop member list updates so the list does not jump or reorder while you look at it."
+						subLabel="Let the member list load, then stop later updates so it does not jump or reorder while you look at it."
 						value={settings.freezeMemberList}
 						onValueChange={freezeMemberList =>
 							storage.set({ freezeMemberList })

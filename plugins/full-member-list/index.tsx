@@ -19,7 +19,8 @@ type LooseBefore = (
 const beforeLoose = before as unknown as LooseBefore
 
 const requestedGuilds = new Set<string>()
-const seenMemberLists = new Set<string>()
+const memberListUpdateCounts = new Map<string, number>()
+let lastFreezeSetting = false
 let requestMembersFn:
 	| ((guildId: string, query?: string, limit?: number) => void)
 	| undefined
@@ -202,8 +203,8 @@ function buildRequestedRanges(
 	)
 	const maxEnd =
 		Number.isFinite(memberCount) && memberCount > 0
-			? Math.min(memberCount, 5000)
-			: 2000
+			? Math.min(memberCount, 10000)
+			: 3000
 
 	let highest = 99
 	for (const range of current) {
@@ -214,7 +215,7 @@ function buildRequestedRanges(
 
 	// Keep the client's requested/visible ranges and prefetch ahead while
 	// scrolling. A wider window helps reach lower/offline groups in lazy guilds.
-	const target = Math.min(maxEnd, Math.max(highest + 500, 799))
+	const target = Math.min(maxEnd, Math.max(highest + 1000, 999))
 	const wanted: [number, number][] = [[0, 99]]
 	for (let start = 100; start <= target; start += 100) {
 		wanted.push([start, start + 99])
@@ -297,16 +298,26 @@ function memberListKey(action: any): string | undefined {
 	return `${guildId}:${listId}`
 }
 
-function shouldFreezeMemberList(action: any, settings: Settings): boolean {
-	if (!settings.freezeMemberList) return false
-	const key = memberListKey(action)
-	if (!key) return true
-	if (!seenMemberLists.has(key)) {
-		// Allow the first update through so the list can populate/load.
-		seenMemberLists.add(key)
-		return false
+function syncFreezeState(settings: Settings): void {
+	if (settings.freezeMemberList !== lastFreezeSetting) {
+		lastFreezeSetting = settings.freezeMemberList
+		memberListUpdateCounts.clear()
 	}
-	return true
+}
+
+function shouldFreezeMemberList(action: any, settings: Settings): boolean {
+	syncFreezeState(settings)
+	if (!settings.freezeMemberList) return false
+
+	const key = memberListKey(action)
+	if (!key) return false
+
+	const count = (memberListUpdateCounts.get(key) ?? 0) + 1
+	memberListUpdateCounts.set(key, count)
+
+	// Allow several initial updates so the member list can fully populate/load.
+	// After that, freeze subsequent updates to prevent reordering/jumping.
+	return count > 8
 }
 
 function bootstrap({ cleanup: clean, jsonStorage: storage }: any) {
@@ -360,7 +371,8 @@ function bootstrap({ cleanup: clean, jsonStorage: storage }: any) {
 
 	cleanup(() => {
 		requestedGuilds.clear()
-		seenMemberLists.clear()
+		memberListUpdateCounts.clear()
+		lastFreezeSetting = false
 		requestMembersFn = undefined
 		requestMembersSearched = false
 	})
