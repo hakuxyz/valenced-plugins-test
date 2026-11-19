@@ -1,4 +1,4 @@
-import { getStore } from '@valenced/discord/flux'
+import { getStore, Stores } from '@valenced/discord/flux'
 import { instead } from '@valenced/patcher'
 import SettingsComponent from './settings'
 import {
@@ -78,6 +78,20 @@ function cloneProfile(profile: UserProfileLike): UserProfileLike {
 function resolvePremiumType(profile: UserProfileLike): unknown {
 	if (profile?.premiumType != null) return profile.premiumType
 	return undefined
+}
+
+function currentUserId(): string | undefined {
+	try {
+		return (Stores as any)?.UserStore?.getCurrentUser?.()?.id
+	} catch {
+		return undefined
+	}
+}
+
+function isOwnProfile(profile: UserProfileLike): boolean {
+	const id = currentUserId()
+	if (!id) return false
+	return profile?.userId === id || profile?.id === id
 }
 
 function shouldAffectProfile(
@@ -181,13 +195,13 @@ function transformProfile(
 		const target = shouldAffectProfile(profile, settings)
 		if (!target) return profile
 
+		const ownProfile = isOwnProfile(profile)
+		const affectOwnBadges = !ownProfile || settings.affectYourBadges
+
 		const premiumSince = profile.premiumSince ?? profile.premiumGuildSince
-		const nextBadges = transformBadges(
-			profile.badges,
-			target.kind,
-			settings,
-			premiumSince,
-		)
+		const nextBadges = affectOwnBadges
+			? transformBadges(profile.badges, target.kind, settings, premiumSince)
+			: profile.badges
 
 		const next = nextBadges === profile.badges ? profile : cloneProfile(profile)
 		let changed = nextBadges !== profile.badges
@@ -199,7 +213,7 @@ function transformProfile(
 		// When enabled, nudge tenure back locally so areas that derive
 		// Nitro evolution from premium tenure (such as Your badges) can show
 		// the original/starter state for forced-original behavior.
-		if (settings.affectYourBadges && target.kind === 'premium') {
+		if (affectOwnBadges && target.kind === 'premium') {
 			if (settings.premiumMode === 'original') {
 				const beforeSince = (next as UserProfileLike).premiumSince
 				const beforeGuildSince = (next as UserProfileLike).premiumGuildSince

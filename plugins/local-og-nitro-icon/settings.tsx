@@ -50,7 +50,7 @@ export default function SettingsComponent({
 				<TableRowGroup title="Nitro Premium behavior">
 					<TableSwitchRow
 						label="Affect Your badges"
-						subLabel="Apply the selected Nitro Premium behavior to the Your badges area."
+						subLabel="Apply the selected Nitro Premium behavior to your own badges (Your badges area)."
 						value={settings.affectYourBadges}
 						onValueChange={affectYourBadges =>
 							storage.set({ affectYourBadges })
