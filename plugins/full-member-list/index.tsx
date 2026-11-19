@@ -26,7 +26,12 @@ let requestMembersSearched = false
 
 function currentSettings(storage: any): Settings {
 	try {
-		return { ...DefaultSettings, ...(storage?.cache ?? {}) }
+		const cached =
+			storage?.cache ??
+			(typeof storage?.get === 'function' ? storage.get() : undefined) ??
+			storage?.data ??
+			{}
+		return { ...DefaultSettings, ...cached }
 	} catch {
 		return DefaultSettings
 	}
@@ -254,60 +259,69 @@ function augmentSubscriptionsAction(action: any, settings: Settings): void {
 	}
 }
 
+function bootstrap({ cleanup: clean, jsonStorage: storage }: any) {
+	const cleanup = clean as Cleanup
+
+	try {
+		cleanup(
+			beforeLoose(Dispatcher as any, 'dispatch', (args: any[]) => {
+				try {
+					const action = args?.[0]
+					if (!action || typeof action !== 'object') return args
+
+					const settings = currentSettings(storage)
+
+					if (action.type === 'GUILD_MEMBER_LIST_UPDATE') {
+						maybeRequestAllMembers(guildIdFromAction(action), settings)
+						if (settings.freezeMemberList) {
+							args[0] = { type: 'HAKUXYZ_FULL_MEMBER_LIST_BLOCKED' }
+							return args
+						}
+					}
+
+					if (
+						settings.showAllMembers &&
+						action.type === 'GUILD_SUBSCRIPTIONS'
+					) {
+						augmentSubscriptionsAction(action, settings)
+						maybeRequestAllMembers(guildIdFromAction(action), settings)
+					}
+
+					if (
+						settings.showAllMembers &&
+						(action.type === 'CHANNEL_SELECT' ||
+							action.type === 'GUILD_SUBSCRIPTIONS_CHANNEL' ||
+							action.type === 'GUILD_SUBSCRIPTIONS_FLUSH')
+					) {
+						maybeRequestAllMembers(guildIdFromAction(action), settings)
+					}
+				} catch {}
+				return args
+			}),
+		)
+	} catch {}
+
+	cleanup(() => {
+		requestedGuilds.clear()
+		requestMembersFn = undefined
+		requestMembersSearched = false
+	})
+}
+
 export default plugin({
 	jsonStorage: {
 		load: true,
 		default: DefaultSettings,
 	},
 
-	init({ cleanup: clean, jsonStorage: storage }) {
-		const cleanup = clean as Cleanup
-
-		try {
-			cleanup(
-				beforeLoose(Dispatcher as any, 'dispatch', (args: any[]) => {
-					try {
-						const action = args?.[0]
-						if (!action || typeof action !== 'object') return args
-
-						const settings = currentSettings(storage)
-
-						if (action.type === 'GUILD_MEMBER_LIST_UPDATE') {
-							maybeRequestAllMembers(guildIdFromAction(action), settings)
-							if (settings.freezeMemberList) {
-								args[0] = { type: 'HAKUXYZ_FULL_MEMBER_LIST_BLOCKED' }
-								return args
-							}
-						}
-
-						if (
-							settings.showAllMembers &&
-							action.type === 'GUILD_SUBSCRIPTIONS'
-						) {
-							augmentSubscriptionsAction(action, settings)
-							maybeRequestAllMembers(guildIdFromAction(action), settings)
-						}
-
-						if (
-							settings.showAllMembers &&
-							(action.type === 'CHANNEL_SELECT' ||
-								action.type === 'GUILD_SUBSCRIPTIONS_CHANNEL' ||
-								action.type === 'GUILD_SUBSCRIPTIONS_FLUSH')
-						) {
-							maybeRequestAllMembers(guildIdFromAction(action), settings)
-						}
-					} catch {}
-					return args
-				}),
-			)
-		} catch {}
-
-		cleanup(() => {
-			requestedGuilds.clear()
-			requestMembersFn = undefined
-			requestMembersSearched = false
-		})
+	init(ctx: any) {
+		bootstrap(ctx)
 	},
 
+	start(ctx: any) {
+		bootstrap(ctx)
+	},
+
+	settings: SettingsComponent,
 	SettingsComponent,
 })
