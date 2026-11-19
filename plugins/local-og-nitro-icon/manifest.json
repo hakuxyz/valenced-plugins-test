@@ -2,9 +2,9 @@
 	"format": 1,
 	"id": "hakuxyz.local-og-nitro-icon",
 	"name": "Local OG Nitro Icon",
-	"description": "Locally show the original Nitro badge icon instead of the evolved badge.",
+	"description": "Locally show the original Nitro badge icon and adjust Nitro Premium badge behavior.",
 	"author": "hakuxyz (https://github.com/hakuxyz \"GitHub\")",
-	"version": "1.0.1",
+	"version": "1.0.2",
 	"icon": "NitroWheelIcon",
 	"dependencies": {
 		"valenced.api": {

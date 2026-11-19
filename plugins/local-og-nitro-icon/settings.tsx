@@ -26,8 +26,8 @@ export default function SettingsComponent({
 		<ScrollView>
 			<Page>
 				<Text variant="text-md/normal" style={{ marginBottom: 12 }}>
-					Locally replace evolved Nitro badges with the original starter Nitro
-					icon, or remove evolved badges for Nitro Premium users.
+					Locally show the original Nitro badge icon and optionally affect
+					Nitro-related areas like Your Banners.
 				</Text>
 
 				<TableRowGroup title="Apply to">
@@ -47,8 +47,19 @@ export default function SettingsComponent({
 					/>
 				</TableRowGroup>
 
+				<TableRowGroup title="Nitro Premium behavior">
+					<TableSwitchRow
+						label="Affect Your Banners"
+						subLabel="Apply the selected Nitro Premium behavior to the Your Banners area."
+						value={settings.affectYourBanners}
+						onValueChange={affectYourBanners =>
+							storage.set({ affectYourBanners })
+						}
+					/>
+				</TableRowGroup>
+
 				<TableRadioGroup
-					title="Nitro Premium behavior"
+					title="Nitro Premium behavior mode"
 					value={settings.premiumMode}
 					onChange={setPremiumMode}
 					hasIcons={false}
@@ -59,8 +70,8 @@ export default function SettingsComponent({
 						value="original"
 					/>
 					<TableRadioRow
-						label="Remove evolved badge"
-						subLabel="Replace evolved Nitro badges (1 month or longer) with the original starter icon instead of removing the badge."
+						label="Replace starter badge only"
+						subLabel="Replace the starter Nitro badge with the original icon and keep other evolved badges."
 						value="removeEvolved"
 					/>
 				</TableRadioGroup>
