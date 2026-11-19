@@ -2,9 +2,9 @@
 	"format": 1,
 	"id": "hakuxyz.full-member-list",
 	"name": "Full Member List",
-	"description": "Show all members in large servers and optionally freeze the member list.",
+	"description": "Show online members normally and load offline members progressively in large servers, with an option to freeze the member list.",
 	"author": "hakuxyz (https://github.com/hakuxyz \"GitHub\")",
-	"version": "1.0.0",
+	"version": "1.0.1",
 	"icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0OCIgaGVpZ2h0PSI0OCIgdmlld0JveD0iMCAwIDQ4IDQ4Ij48cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMCIgZmlsbD0iIzFmMjEzMSIvPjxwYXRoIGQ9Ik0xMiAyMCBjMCAyLjIgMS44IDQgNCA0IHM0LTEuOCA0LTRzLTEuOC00LTQtNC00IDEuOC00IDR6IG0xNiAwIGMwIDIuMiAxLjggNCA0IDQgczQtMS44IDQtNHMtMS44LTQtNC00IDEuOC00IDR6IE04IDM0IGMwLTMuMyA1LjMtNSA4LTUgczggMS43IDggNSB2MiBIOCB6IG0xNiAwIGMwLTEuMy0uNC0yLjQtMS4xLTMuMyAxLjYtMSAxLjctMS43IDUuMS0xLjcgMi43IDAgOCAxLjcgOCA1IHYyIEgyNCB6IiBmaWxsPSIjNTg2NWYyIi8+PC9zdmc+",
 	"dependencies": {
 		"valenced.api": {

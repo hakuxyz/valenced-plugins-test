@@ -26,7 +26,7 @@ export default function SettingsComponent({
 				<TableRowGroup title="Member List">
 					<TableSwitchRow
 						label="Show all members"
-						subLabel="Try to load offline members in servers with more than 1000 members."
+						subLabel="Keep online members normal and progressively load more members while scrolling in servers with more than 1000 members."
 						value={settings.showAllMembers}
 						onValueChange={showAllMembers => storage.set({ showAllMembers })}
 					/>

@@ -40,6 +40,15 @@ function storeByName(name: string): Record<string, any> | undefined {
 	}
 }
 
+function getGuild(guildId: string): any {
+	if (!guildId) return undefined
+	try {
+		return storeByName('GuildStore')?.getGuild?.(guildId)
+	} catch {
+		return undefined
+	}
+}
+
 function guildIdFromAction(action: any): string | undefined {
 	if (!action || typeof action !== 'object') return undefined
 	if (typeof action.guildId === 'string' && action.guildId)
@@ -69,7 +78,7 @@ function guildIdFromAction(action: any): string | undefined {
 function isLargeOrUnknownGuild(guildId: string): boolean {
 	if (!guildId) return false
 	try {
-		const guild = storeByName('GuildStore')?.getGuild?.(guildId)
+		const guild = getGuild(guildId)
 		if (!guild) return true
 		const count = Number(guild.memberCount ?? guild.approximateMemberCount ?? 0)
 		if (count >= 1000) return true
@@ -149,6 +158,102 @@ function maybeRequestAllMembers(
 	requestAllMembers(guildId)
 }
 
+function rangeKey(range: [number, number]): string {
+	return `${range[0]}:${range[1]}`
+}
+
+function mergeRanges(
+	existing: [number, number][],
+	wanted: [number, number][],
+): [number, number][] {
+	const out: [number, number][] = []
+	const seen = new Set<string>()
+	for (const range of [...existing, ...wanted]) {
+		if (!Array.isArray(range) || range.length < 2) continue
+		const start = Number(range[0])
+		const end = Number(range[1])
+		if (!Number.isFinite(start) || !Number.isFinite(end) || end < start)
+			continue
+		const normalized: [number, number] = [
+			Math.max(0, Math.floor(start)),
+			Math.floor(end),
+		]
+		const key = rangeKey(normalized)
+		if (seen.has(key)) continue
+		seen.add(key)
+		out.push(normalized)
+	}
+	return out.sort((a, b) => a[0] - b[0] || a[1] - b[1])
+}
+
+function buildRequestedRanges(
+	current: [number, number][],
+	guildId: string,
+): [number, number][] {
+	const guild = getGuild(guildId)
+	const memberCount = Number(
+		guild?.memberCount ?? guild?.approximateMemberCount ?? 0,
+	)
+	const maxEnd =
+		Number.isFinite(memberCount) && memberCount > 0 ? memberCount : 1200
+
+	let highest = 99
+	for (const range of current) {
+		if (Array.isArray(range) && Number.isFinite(range[1])) {
+			highest = Math.max(highest, Number(range[1]))
+		}
+	}
+
+	// Keep the client's requested/visible ranges and prefetch a bit ahead so
+	// members can load progressively while scrolling, instead of requesting
+	// the entire guild list in one go.
+	const target = Math.min(maxEnd, Math.max(highest + 300, 399))
+	const wanted: [number, number][] = [[0, 99]]
+	for (let start = 100; start <= target; start += 100) {
+		wanted.push([start, start + 99])
+	}
+
+	return mergeRanges(current, wanted)
+}
+
+function augmentSubscriptionRangesForGuild(
+	subscription: any,
+	guildId: string,
+): void {
+	if (!subscription || typeof subscription !== 'object') return
+	const channels = subscription.channels
+	if (!channels || typeof channels !== 'object') return
+
+	for (const channelId of Object.keys(channels)) {
+		const value = channels[channelId]
+		if (Array.isArray(value)) {
+			channels[channelId] = buildRequestedRanges(
+				value as [number, number][],
+				guildId,
+			)
+			continue
+		}
+		if (value && typeof value === 'object' && Array.isArray(value.ranges)) {
+			value.ranges = buildRequestedRanges(
+				value.ranges as [number, number][],
+				guildId,
+			)
+		}
+	}
+}
+
+function augmentSubscriptionsAction(action: any, settings: Settings): void {
+	if (!settings.showAllMembers || !action || typeof action !== 'object') return
+	const subs = action.subscriptions
+	if (!subs || typeof subs !== 'object' || Array.isArray(subs)) return
+
+	for (const guildId of Object.keys(subs)) {
+		if (!/^\d+$/.test(guildId)) continue
+		if (!isLargeOrUnknownGuild(guildId)) continue
+		augmentSubscriptionRangesForGuild(subs[guildId], guildId)
+	}
+}
+
 export default plugin({
 	jsonStorage: {
 		load: true,
@@ -177,8 +282,16 @@ export default plugin({
 
 						if (
 							settings.showAllMembers &&
+							action.type === 'GUILD_SUBSCRIPTIONS'
+						) {
+							augmentSubscriptionsAction(action, settings)
+							maybeRequestAllMembers(guildIdFromAction(action), settings)
+						}
+
+						if (
+							settings.showAllMembers &&
 							(action.type === 'CHANNEL_SELECT' ||
-								action.type === 'GUILD_SUBSCRIPTIONS' ||
+								action.type === 'GUILD_SUBSCRIPTIONS_CHANNEL' ||
 								action.type === 'GUILD_SUBSCRIPTIONS_FLUSH')
 						) {
 							maybeRequestAllMembers(guildIdFromAction(action), settings)
