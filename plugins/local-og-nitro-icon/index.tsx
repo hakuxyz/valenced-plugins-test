@@ -54,7 +54,14 @@ function currentSettings(storage: any): Settings {
 			(typeof storage?.get === 'function' ? storage.get() : undefined) ??
 			storage?.data ??
 			{}
-		return { ...DefaultSettings, ...cached }
+		return {
+			...DefaultSettings,
+			...cached,
+			affectYourBadges:
+				cached?.affectYourBadges ??
+				cached?.affectYourBanners ??
+				DefaultSettings.affectYourBadges,
+		}
 	} catch {
 		return DefaultSettings
 	}
@@ -190,9 +197,9 @@ function transformProfile(
 		}
 
 		// When enabled, nudge tenure back locally so areas that derive
-		// Nitro evolution from premium tenure (such as Your Banners) can show
+		// Nitro evolution from premium tenure (such as Your badges) can show
 		// the original/starter state for forced-original behavior.
-		if (settings.affectYourBanners && target.kind === 'premium') {
+		if (settings.affectYourBadges && target.kind === 'premium') {
 			if (settings.premiumMode === 'original') {
 				const beforeSince = (next as UserProfileLike).premiumSince
 				const beforeGuildSince = (next as UserProfileLike).premiumGuildSince

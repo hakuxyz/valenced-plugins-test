@@ -27,7 +27,7 @@ export default function SettingsComponent({
 			<Page>
 				<Text variant="text-md/normal" style={{ marginBottom: 12 }}>
 					Locally show the original Nitro badge icon and optionally affect
-					Nitro-related areas like Your Banners.
+					Nitro-related areas like Your badges.
 				</Text>
 
 				<TableRowGroup title="Apply to">
@@ -49,11 +49,11 @@ export default function SettingsComponent({
 
 				<TableRowGroup title="Nitro Premium behavior">
 					<TableSwitchRow
-						label="Affect Your Banners"
-						subLabel="Apply the selected Nitro Premium behavior to the Your Banners area."
-						value={settings.affectYourBanners}
-						onValueChange={affectYourBanners =>
-							storage.set({ affectYourBanners })
+						label="Affect Your badges"
+						subLabel="Apply the selected Nitro Premium behavior to the Your badges area."
+						value={settings.affectYourBadges}
+						onValueChange={affectYourBadges =>
+							storage.set({ affectYourBadges })
 						}
 					/>
 				</TableRowGroup>
