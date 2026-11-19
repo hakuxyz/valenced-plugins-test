@@ -19,6 +19,7 @@ type LooseBefore = (
 const beforeLoose = before as unknown as LooseBefore
 
 const requestedGuilds = new Set<string>()
+const seenMemberLists = new Set<string>()
 let requestMembersFn:
 	| ((guildId: string, query?: string, limit?: number) => void)
 	| undefined
@@ -200,7 +201,9 @@ function buildRequestedRanges(
 		guild?.memberCount ?? guild?.approximateMemberCount ?? 0,
 	)
 	const maxEnd =
-		Number.isFinite(memberCount) && memberCount > 0 ? memberCount : 1200
+		Number.isFinite(memberCount) && memberCount > 0
+			? Math.min(memberCount, 5000)
+			: 2000
 
 	let highest = 99
 	for (const range of current) {
@@ -209,16 +212,34 @@ function buildRequestedRanges(
 		}
 	}
 
-	// Keep the client's requested/visible ranges and prefetch a bit ahead so
-	// members can load progressively while scrolling, instead of requesting
-	// the entire guild list in one go.
-	const target = Math.min(maxEnd, Math.max(highest + 300, 399))
+	// Keep the client's requested/visible ranges and prefetch ahead while
+	// scrolling. A wider window helps reach lower/offline groups in lazy guilds.
+	const target = Math.min(maxEnd, Math.max(highest + 500, 799))
 	const wanted: [number, number][] = [[0, 99]]
 	for (let start = 100; start <= target; start += 100) {
 		wanted.push([start, start + 99])
 	}
 
 	return mergeRanges(current, wanted)
+}
+
+function augmentRangeContainer(container: any, guildId: string): void {
+	if (!container || typeof container !== 'object') return
+	if (Array.isArray(container)) {
+		const augmented = buildRequestedRanges(
+			container as [number, number][],
+			guildId,
+		)
+		container.length = 0
+		for (const range of augmented) container.push(range)
+		return
+	}
+	if (Array.isArray(container.ranges)) {
+		container.ranges = buildRequestedRanges(
+			container.ranges as [number, number][],
+			guildId,
+		)
+	}
 }
 
 function augmentSubscriptionRangesForGuild(
@@ -230,20 +251,7 @@ function augmentSubscriptionRangesForGuild(
 	if (!channels || typeof channels !== 'object') return
 
 	for (const channelId of Object.keys(channels)) {
-		const value = channels[channelId]
-		if (Array.isArray(value)) {
-			channels[channelId] = buildRequestedRanges(
-				value as [number, number][],
-				guildId,
-			)
-			continue
-		}
-		if (value && typeof value === 'object' && Array.isArray(value.ranges)) {
-			value.ranges = buildRequestedRanges(
-				value.ranges as [number, number][],
-				guildId,
-			)
-		}
+		augmentRangeContainer(channels[channelId], guildId)
 	}
 }
 
@@ -257,6 +265,48 @@ function augmentSubscriptionsAction(action: any, settings: Settings): void {
 		if (!isLargeOrUnknownGuild(guildId)) continue
 		augmentSubscriptionRangesForGuild(subs[guildId], guildId)
 	}
+}
+
+function augmentSingleChannelSubscription(
+	action: any,
+	settings: Settings,
+): void {
+	if (!settings.showAllMembers || !action || typeof action !== 'object') return
+	const guildId = guildIdFromAction(action)
+	if (!guildId || !isLargeOrUnknownGuild(guildId)) return
+
+	if (action.channels && typeof action.channels === 'object') {
+		for (const channelId of Object.keys(action.channels)) {
+			augmentRangeContainer(action.channels[channelId], guildId)
+		}
+	}
+
+	if (Array.isArray(action.ranges)) {
+		augmentRangeContainer(action.ranges, guildId)
+	}
+}
+
+function memberListKey(action: any): string | undefined {
+	const guildId = guildIdFromAction(action)
+	if (!guildId) return undefined
+	const listId =
+		(typeof action?.id === 'string' && action.id) ||
+		(typeof action?.channelId === 'string' && action.channelId) ||
+		(typeof action?.channel_id === 'string' && action.channel_id) ||
+		'unknown'
+	return `${guildId}:${listId}`
+}
+
+function shouldFreezeMemberList(action: any, settings: Settings): boolean {
+	if (!settings.freezeMemberList) return false
+	const key = memberListKey(action)
+	if (!key) return true
+	if (!seenMemberLists.has(key)) {
+		// Allow the first update through so the list can populate/load.
+		seenMemberLists.add(key)
+		return false
+	}
+	return true
 }
 
 function bootstrap({ cleanup: clean, jsonStorage: storage }: any) {
@@ -273,7 +323,7 @@ function bootstrap({ cleanup: clean, jsonStorage: storage }: any) {
 
 					if (action.type === 'GUILD_MEMBER_LIST_UPDATE') {
 						maybeRequestAllMembers(guildIdFromAction(action), settings)
-						if (settings.freezeMemberList) {
+						if (shouldFreezeMemberList(action, settings)) {
 							args[0] = { type: 'HAKUXYZ_FULL_MEMBER_LIST_BLOCKED' }
 							return args
 						}
@@ -289,8 +339,15 @@ function bootstrap({ cleanup: clean, jsonStorage: storage }: any) {
 
 					if (
 						settings.showAllMembers &&
+						action.type === 'GUILD_SUBSCRIPTIONS_CHANNEL'
+					) {
+						augmentSingleChannelSubscription(action, settings)
+						maybeRequestAllMembers(guildIdFromAction(action), settings)
+					}
+
+					if (
+						settings.showAllMembers &&
 						(action.type === 'CHANNEL_SELECT' ||
-							action.type === 'GUILD_SUBSCRIPTIONS_CHANNEL' ||
 							action.type === 'GUILD_SUBSCRIPTIONS_FLUSH')
 					) {
 						maybeRequestAllMembers(guildIdFromAction(action), settings)
@@ -303,6 +360,7 @@ function bootstrap({ cleanup: clean, jsonStorage: storage }: any) {
 
 	cleanup(() => {
 		requestedGuilds.clear()
+		seenMemberLists.clear()
 		requestMembersFn = undefined
 		requestMembersSearched = false
 	})
