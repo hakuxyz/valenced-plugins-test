@@ -261,21 +261,23 @@ function openConvertedMedia(event: any): boolean {
 	const pageY = positiveNumber(event.pageY ?? event.nativeEvent?.pageY)
 
 	try {
+		const width = source.width ?? 0
+		const height = source.height ?? 0
 		openMediaModal({
 			initialSources: [
 				{
 					uri: source.url,
 					sourceURI: source.url,
-					width: source.width,
-					height: source.height,
+					width,
+					height,
 					guildId: source.guildId,
 					channelId: source.channelId,
 				},
 			],
 			initialIndex: 0,
 			originLayout: {
-				width: source.width ?? 0,
-				height: source.height ?? 0,
+				width,
+				height,
 				x: pageX ?? 0,
 				y: pageY ?? 0,
 				resizeMode: 'fill',
@@ -303,25 +305,6 @@ function isAnimated(
 	)
 }
 
-function contentTypeFor(url: string): string {
-	const ext = url.match(/\.([a-z0-9]+)(?:\?|$)/i)?.[1]?.toLowerCase()
-	switch (ext) {
-		case 'jpg':
-		case 'jpeg':
-			return 'image/jpeg'
-		case 'gif':
-			return 'image/gif'
-		case 'webp':
-			return 'image/webp'
-		case 'bmp':
-			return 'image/bmp'
-		case 'avif':
-			return 'image/avif'
-		default:
-			return 'image/png'
-	}
-}
-
 function imageEmbed(
 	url: string,
 	width: number | undefined,
@@ -332,17 +315,10 @@ function imageEmbed(
 		srcIsAnimated: animated,
 		srclsAnimated: animated,
 	}
-	const mediaFields = {
-		contentType: contentTypeFor(url),
-		placeholder: '',
-		placeholderVersion: 1,
-		flags: animated ? 1 : 0,
-	}
 	const image: Record<string, unknown> = {
 		url,
 		proxyURL: url,
 		...animatedFields,
-		...mediaFields,
 	}
 	if (width !== undefined) image.width = width
 	if (height !== undefined) image.height = height
@@ -531,13 +507,17 @@ function installTapHandlers(exports: any, cleanup: Cleanup): void {
 			ensureWritable(target, key)
 			patched.add(original)
 
-			const unpatch = insteadLoose(target, key, (args, originalFn) => {
-				const event = args?.[0]?.nativeEvent ?? args?.[0]
-				try {
-					if (openConvertedMedia(event)) return undefined
-				} catch {}
-				return originalFn(...args)
-			})
+			const unpatch = insteadLoose(
+				target,
+				key,
+				function (this: any, args: any[], originalFn: AnyFunction) {
+					const event = args?.[0]?.nativeEvent ?? args?.[0]
+					try {
+						if (openConvertedMedia(event)) return undefined
+					} catch {}
+					return originalFn.apply(this, args)
+				},
+			)
 
 			cleanup(() => {
 				patched.delete(original)

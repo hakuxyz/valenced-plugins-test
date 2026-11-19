@@ -4,7 +4,7 @@
 	"name": "Image Fixer",
 	"description": "Keep low-resolution image uploads sharp by rendering them like pasted image links.",
 	"author": "hakuxyz (https://github.com/hakuxyz \"GitHub\")",
-	"version": "1.0.5",
+	"version": "1.0.6",
 	"icon": "ImageIcon",
 	"dependencies": {
 		"valenced.api": {
