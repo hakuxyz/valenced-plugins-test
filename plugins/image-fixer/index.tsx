@@ -1,6 +1,6 @@
 import { getModules } from '@valenced/modules/finders'
-import { withName } from '@valenced/modules/finders/filters'
-import { after, before } from '@valenced/patcher'
+import { withName, withProps } from '@valenced/modules/finders/filters'
+import { after, before, instead } from '@valenced/patcher'
 import SettingsComponent from './settings'
 import { DefaultSettings } from './shared'
 import { currentSettings, setStorage } from './state'
@@ -21,8 +21,15 @@ type LooseAfter = (
 	hook: (result: any) => any,
 ) => () => void
 
+type LooseInstead = (
+	parent: Record<string, AnyFunction>,
+	key: string,
+	hook: (args: any[], original: AnyFunction) => any,
+) => () => boolean
+
 const beforeLoose = before as unknown as LooseBefore
 const afterLoose = after as unknown as LooseAfter
+const insteadLoose = instead as unknown as LooseInstead
 
 const URL_KEYS = ['url', 'proxy_url', 'proxyURL', 'proxyUrl', 'uri'] as const
 const RESIZE_PARAMS = ['width', 'height', 'size', 'quality', 'format'] as const
@@ -30,6 +37,19 @@ const SMALL_LIMITS = [128, 256, 512] as const
 const MEDIA_HOSTS = new Set(['cdn.discordapp.com', 'media.discordapp.net'])
 const MEDIA_PATH = /^\/(?:attachments|ephemeral-attachments|external)\//
 const IMAGE_EXT = /\.(?:png|jpe?g|gif|webp|bmp|avif)(?:\?|$)/i
+const TAP_HANDLER = /^handleTap(?:.*)(?:Embed|Image|Media|Attachment)$/i
+
+let openMediaModal: ((props: any) => void) | undefined
+const convertedRows = new Map<
+	string,
+	{
+		url: string
+		width?: number
+		height?: number
+		guildId?: string
+		channelId?: string
+	}
+>()
 
 interface RowData {
 	rowType?: unknown
@@ -169,6 +189,74 @@ function isSpoiler(attachment: Record<string, any>): boolean {
 	return attachment.spoiler === true || attachment.isSpoiler === true
 }
 
+function rememberConverted(
+	message: Record<string, any>,
+	attachment: Record<string, any>,
+	url: string,
+): void {
+	const id = message.id ?? message.messageId ?? message.message_id
+	if (id == null || id === '') return
+
+	const width = positiveNumber(attachment.width)
+	const height = positiveNumber(attachment.height)
+	const guildId =
+		message.guild_id ?? message.guildId ?? message.guildID ?? undefined
+	const channelId =
+		message.channel_id ?? message.channelId ?? message.channelID ?? undefined
+
+	convertedRows.set(String(id), {
+		url,
+		width,
+		height,
+		guildId: guildId == null ? undefined : String(guildId),
+		channelId: channelId == null ? undefined : String(channelId),
+	})
+
+	if (convertedRows.size > 100) {
+		const first = convertedRows.keys().next().value
+		if (first !== undefined) convertedRows.delete(first)
+	}
+}
+
+function openConvertedMedia(event: any): boolean {
+	if (!openMediaModal || !isRecord(event)) return false
+
+	const messageId =
+		event.messageId ?? event.message_id ?? event.message?.id ?? event.id
+	const source =
+		messageId == null ? undefined : convertedRows.get(String(messageId))
+	if (!source) return false
+
+	const pageX = positiveNumber(event.pageX)
+	const pageY = positiveNumber(event.pageY)
+
+	try {
+		openMediaModal({
+			initialSources: [
+				{
+					uri: source.url,
+					sourceURI: source.url,
+					width: source.width,
+					height: source.height,
+					guildId: source.guildId,
+					channelId: source.channelId,
+				},
+			],
+			initialIndex: 0,
+			originLayout: {
+				width: source.width ?? 0,
+				height: source.height ?? 0,
+				x: pageX ?? 0,
+				y: pageY ?? 0,
+				resizeMode: 'fill',
+			},
+		})
+		return true
+	} catch {
+		return false
+	}
+}
+
 function isAnimated(
 	attachment: Record<string, any>,
 	url: string | undefined,
@@ -283,6 +371,7 @@ function transform(result: any, data: RowData | undefined): any {
 					isAnimated(item, originalUrl),
 				),
 			)
+			rememberConverted(message, item, url)
 			converted = true
 			changed = true
 			continue
@@ -348,6 +437,62 @@ function install(exports: any, cleanup: Cleanup): void {
 	}
 }
 
+function resolveHandlers(exports: any): any {
+	const candidates = [
+		exports?.MessagesHandlers,
+		exports?.default?.MessagesHandlers,
+		exports?.default,
+		exports,
+	]
+	for (const candidate of candidates) {
+		if (
+			candidate?.prototype &&
+			typeof candidate.prototype === 'object' &&
+			Object.getOwnPropertyNames(candidate.prototype).some(key =>
+				TAP_HANDLER.test(key),
+			)
+		) {
+			return candidate
+		}
+	}
+	return undefined
+}
+
+function installTapHandlers(exports: any, cleanup: Cleanup): void {
+	const Handlers = resolveHandlers(exports)
+	const target = Handlers?.prototype
+	if (!target) return
+
+	const keys = Object.getOwnPropertyNames(target).filter(
+		key => TAP_HANDLER.test(key) && typeof target[key] === 'function',
+	)
+
+	for (const key of keys) {
+		const original = target[key] as AnyFunction
+		if (patched.has(original)) continue
+
+		try {
+			ensureWritable(target, key)
+			patched.add(original)
+
+			const unpatch = insteadLoose(target, key, (args, originalFn) => {
+				const event = args?.[0]?.nativeEvent ?? args?.[0]
+				try {
+					if (openConvertedMedia(event)) return undefined
+				} catch {}
+				return originalFn(...args)
+			})
+
+			cleanup(() => {
+				patched.delete(original)
+				unpatch()
+			})
+		} catch {
+			patched.delete(original)
+		}
+	}
+}
+
 export default plugin<{ jsonStorage: Settings }>({
 	jsonStorage: {
 		load: true,
@@ -356,6 +501,32 @@ export default plugin<{ jsonStorage: Settings }>({
 
 	start({ cleanup, jsonStorage }) {
 		setStorage(jsonStorage)
+
+		cleanup(() => {
+			openMediaModal = undefined
+			convertedRows.clear()
+		})
+
+		cleanup(
+			getModules(
+				withProps('openMediaModal'),
+				exports => {
+					const opener =
+						exports?.openMediaModal ??
+						(typeof exports === 'function' ? exports : undefined)
+					if (typeof opener === 'function') openMediaModal = opener
+				},
+				{ max: 5 },
+			),
+		)
+
+		cleanup(
+			getModules(
+				withProps('MessagesHandlers'),
+				exports => installTapHandlers(exports, cleanup),
+				{ max: 5 },
+			),
+		)
 
 		cleanup(
 			getModules(withName('RowManager'), exports => install(exports, cleanup), {
