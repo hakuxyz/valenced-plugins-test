@@ -45,7 +45,7 @@ export const PLATFORM_MAP: Record<PlatformKey, PlatformInfo> = {
 	tiktok: {
 		key: 'tiktok',
 		label: 'TikTok',
-		source: 'tiktok.com links',
+		source: 'tiktok.com, vm.tiktok.com and vt.tiktok.com links',
 		defaultDomain: 'tnktok.com',
 	},
 	bluesky: {
@@ -162,6 +162,13 @@ function isHost(host: string, exact: string): boolean {
 	return value === exact || value.endsWith(`.${exact}`)
 }
 
+function preservedTikTokSubdomain(host: string): string | undefined {
+	const value = host.toLowerCase().replace(/\.$/, '')
+	if (value === 'vm.tiktok.com' || value.endsWith('.vm.tiktok.com')) return 'vm'
+	if (value === 'vt.tiktok.com' || value.endsWith('.vt.tiktok.com')) return 'vt'
+	return undefined
+}
+
 export function matchesPlatform(host: string, key: PlatformKey): boolean {
 	switch (key) {
 		case 'twitter':
@@ -238,10 +245,27 @@ export function rewriteContent(content: string, settings: Settings): string {
 		if (!platform) return match
 
 		const replacement = replacements.get(platform)
-		if (!replacement || replacement.host === host) return match
+		if (!replacement) return match
+
+		let origin = replacement.origin
+		let targetHost = replacement.host
+
+		if (platform === 'tiktok') {
+			const preserved = preservedTikTokSubdomain(host)
+			if (preserved) {
+				try {
+					const rewritten = new URL(replacement.origin)
+					rewritten.hostname = `${preserved}.${replacement.host}`
+					origin = rewritten.origin
+					targetHost = rewritten.hostname
+				} catch {}
+			}
+		}
+
+		if (targetHost === host) return match
 
 		const path =
 			url.pathname === '/' && replacement.prefix === '' ? '' : url.pathname
-		return `${replacement.origin}${replacement.prefix}${path}${url.search}${url.hash}${suffix}`
+		return `${origin}${replacement.prefix}${path}${url.search}${url.hash}${suffix}`
 	})
 }
