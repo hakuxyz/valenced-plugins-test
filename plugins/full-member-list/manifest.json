@@ -4,7 +4,7 @@
 	"name": "Full Member List",
 	"description": "Show online members normally and load offline members progressively in large servers, with an option to freeze the member list.",
 	"author": "hakuxyz (https://github.com/hakuxyz \"GitHub\")",
-	"version": "1.0.6",
+	"version": "1.0.7",
 	"icon": "FriendsIcon",
 	"dependencies": {
 		"valenced.api": {

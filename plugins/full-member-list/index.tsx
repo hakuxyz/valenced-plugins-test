@@ -388,9 +388,9 @@ function shouldFreezeMemberList(action: any, settings: Settings): boolean {
 	const count = (memberListUpdateCounts.get(key) ?? 0) + 1
 	memberListUpdateCounts.set(key, count)
 
-	// Allow several initial updates so the member list can fully populate/load.
-	// After that, freeze subsequent updates to prevent reordering/jumping.
-	return count > 8
+	// Allow enough initial/range-loading updates for large member lists to
+	// populate before freezing subsequent churn/reordering updates.
+	return count > 150
 }
 
 function bootstrap({ cleanup: clean, jsonStorage: storage }: any) {
