@@ -4,7 +4,7 @@
 	"name": "Image Fixer",
 	"description": "Keep low-resolution image uploads sharp by rendering them like pasted image links.",
 	"author": "hakuxyz (https://github.com/hakuxyz \"GitHub\")",
-	"version": "1.0.1",
+	"version": "1.0.2",
 	"icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0OCIgaGVpZ2h0PSI0OCIgdmlld0JveD0iMCAwIDQ4IDQ4Ij48cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMCIgZmlsbD0iIzFmMjEzMSIvPjxyZWN0IHg9IjkiIHk9IjExIiB3aWR0aD0iMzAiIGhlaWdodD0iMjYiIHJ4PSI0IiBmaWxsPSJub25lIiBzdHJva2U9IiNmMGIyMzIiIHN0cm9rZS13aWR0aD0iMyIvPjxwYXRoIGQ9Ik0xMyAzMWw3LTggNSA2IDQtNSA2IDciIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2YwYjIzMiIgc3Ryb2tlLXdpZHRoPSIzIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz48Y2lyY2xlIGN4PSIxOCIgY3k9IjE5IiByPSIzIiBmaWxsPSIjZWQ0MjQ1Ii8+PHBhdGggZD0iTTM2IDZsMS41IDQuNUw0MiAxMmwtNC41IDEuNUwzNiAxOGwtMS41LTQuNUwzMCAxMmw0LjUtMS41eiIgZmlsbD0iI2YwYjIzMiIvPjwvc3ZnPg==",
 	"dependencies": {
 		"valenced.api": {

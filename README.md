@@ -14,7 +14,7 @@ This repository is removed after testing. The stable repository is
 
 ## Image Fixer
 
-**Version:** 1.0.1
+**Version:** 1.0.2
 
 Keep low-resolution image uploads sharp by rendering them like pasted image links
 and loading the original attachment URL.

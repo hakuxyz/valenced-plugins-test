@@ -191,10 +191,14 @@ function imageEmbed(
 	height: number | undefined,
 	animated: boolean,
 ) {
+	const animatedFields = {
+		srcIsAnimated: animated,
+		srclsAnimated: animated,
+	}
 	const image: Record<string, unknown> = {
 		url,
 		proxyURL: url,
-		srclsAnimated: animated,
+		...animatedFields,
 	}
 	if (width !== undefined) image.width = width
 	if (height !== undefined) image.height = height
@@ -203,6 +207,7 @@ function imageEmbed(
 		type: 'image',
 		spoiler: '',
 		url,
+		...animatedFields,
 		image,
 		fields: [],
 		borderLeftColor: 0,
