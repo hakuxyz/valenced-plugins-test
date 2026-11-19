@@ -1,0 +1,20 @@
+{
+	"format": 1,
+	"id": "hakuxyz.freeze-gif-picker",
+	"name": "Freeze GIF Picker",
+	"description": "Stop GIFs from playing in the GIF picker.",
+	"author": "hakuxyz (https://github.com/hakuxyz \"GitHub\")",
+	"version": "1.0.0",
+	"icon": "GifIcon",
+	"dependencies": {
+		"valenced.api": {
+			"version": ">=1 <2"
+		},
+		"discord": {
+			"version": "*"
+		}
+	},
+	"dist": {
+		"script": "index.js"
+	}
+}
