@@ -135,12 +135,13 @@ function transformBadges(
 		}
 
 		if (settings.premiumMode === 'removeEvolved') {
-			if (isStarterPeriod(premiumSince)) {
+			// Only apply to evolved badges (1 month or longer): replace evolved
+			// badge with the original icon instead of removing it entirely.
+			if (!isStarterPeriod(premiumSince)) {
 				changed = true
 				out.push({ ...badge, icon: OG_NITRO_ICON })
 			} else {
-				changed = true
-				// remove evolved badge
+				out.push(badge)
 			}
 			continue
 		}
@@ -179,8 +180,8 @@ function transformProfile(
 		const next = cloneProfile(profile)
 		next.badges = nextBadges
 
-		// If Nitro badge was removed for an evolved premium user, also nudge
-		// premiumSince forward locally so tenure-based badge rendering (if any)
+		// If an evolved premium badge was normalized to the original icon, nudge
+		// premiumSince back locally so tenure-based badge rendering (if any)
 		// does not reintroduce an evolved badge in some clients.
 		if (
 			target.kind === 'premium' &&
@@ -188,7 +189,7 @@ function transformProfile(
 			!isStarterPeriod(premiumSince)
 		) {
 			try {
-				const recent = new Date(Date.now() - 45 * 24 * 60 * 60 * 1000)
+				const recent = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
 				if (next.premiumSince) next.premiumSince = recent
 				if (next.premiumGuildSince) next.premiumGuildSince = recent
 			} catch {}

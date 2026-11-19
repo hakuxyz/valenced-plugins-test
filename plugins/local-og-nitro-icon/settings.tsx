@@ -60,7 +60,7 @@ export default function SettingsComponent({
 					/>
 					<TableRadioRow
 						label="Remove evolved badge"
-						subLabel="Hide the Nitro badge for Nitro Premium users after the starter period (1 month)."
+						subLabel="Replace evolved Nitro badges (1 month or longer) with the original starter icon instead of removing the badge."
 						value="removeEvolved"
 					/>
 				</TableRadioGroup>
