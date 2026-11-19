@@ -58,6 +58,22 @@ export default function SettingsComponent({
 					<TableRadioRow label="Always" value="always" />
 					<TableRadioRow label="Only when available" value="whenAvailable" />
 				</TableRadioGroup>
+
+				<Text variant="text-sm/normal" style={{ marginTop: 12 }}>
+					Right, center and left line up with the message box. The edge options
+					sit flush with the screen instead.
+				</Text>
+				<TableRadioGroup
+					title="Button position"
+					value={settings.position}
+					onChange={position => storage.set({ position })}
+				>
+					<TableRadioRow label="Right" value="right" />
+					<TableRadioRow label="Center" value="center" />
+					<TableRadioRow label="Left" value="left" />
+					<TableRadioRow label="Screen right edge" value="rightEdge" />
+					<TableRadioRow label="Screen left edge" value="leftEdge" />
+				</TableRadioGroup>
 			</Page>
 		</ScrollView>
 	)

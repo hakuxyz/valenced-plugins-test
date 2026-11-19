@@ -12,7 +12,8 @@ import {
 	subscribe,
 	undo,
 } from './state'
-import type { ButtonSize } from './shared'
+import type { ViewStyle } from 'react-native'
+import type { ButtonPosition, ButtonSize } from './shared'
 
 const { Text } = Design
 
@@ -82,11 +83,30 @@ const METRICS: Record<ButtonSize, Metrics> = {
 
 /** Gap between the pill and the message box, same for every size. */
 const GAP = 6
+/** Inset used by the aligned positions, matching the message box padding. */
+const INSET = 16
+
+/** Horizontal placement of the pill above the message box. */
+function positionStyle(position: ButtonPosition, metrics: Metrics): ViewStyle {
+	const halfWidth = metrics.width + metrics.padH + 0.5
+	switch (position) {
+		case 'left':
+			return { left: INSET }
+		case 'center':
+			return { left: '50%', transform: [{ translateX: -halfWidth }] }
+		case 'rightEdge':
+			return { right: 0 }
+		case 'leftEdge':
+			return { left: 0 }
+		default:
+			return { right: INSET }
+	}
+}
 
 /** Snapshot is a string so React can compare it by value. */
 function snapshot(channelId: string) {
 	const settings = currentSettings()
-	return `${settings.buttons ? 1 : 0}${settings.gestures ? 1 : 0}${settings.size}${settings.pillVisibility}${canUndo(channelId) ? 1 : 0}${canRedo(channelId) ? 1 : 0}`
+	return `${settings.buttons ? 1 : 0}${settings.gestures ? 1 : 0}${settings.size}${settings.pillVisibility}${settings.position}${canUndo(channelId) ? 1 : 0}${canRedo(channelId) ? 1 : 0}`
 }
 
 function Button({
@@ -166,6 +186,7 @@ export default function TypingHistoryPill({ channelId }: Props) {
 		<View
 			style={[
 				styles.pill,
+				positionStyle(settings.position, metrics),
 				{
 					top: -(metrics.height + metrics.padV * 2 + GAP),
 					borderRadius: metrics.radius,
@@ -197,8 +218,7 @@ export default function TypingHistoryPill({ channelId }: Props) {
 const styles = StyleSheet.create({
 	pill: {
 		position: 'absolute',
-		// In line with the message box instead of hanging off its right edge.
-		right: 16,
+		// Horizontal placement comes from positionStyle().
 		zIndex: 5,
 		flexDirection: 'row',
 		alignItems: 'center',
