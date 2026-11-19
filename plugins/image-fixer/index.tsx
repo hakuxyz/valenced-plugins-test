@@ -50,6 +50,16 @@ const convertedRows = new Map<
 		channelId?: string
 	}
 >()
+const convertedUrls = new Map<
+	string,
+	{
+		url: string
+		width?: number
+		height?: number
+		guildId?: string
+		channelId?: string
+	}
+>()
 
 interface RowData {
 	rowType?: unknown
@@ -204,17 +214,23 @@ function rememberConverted(
 	const channelId =
 		message.channel_id ?? message.channelId ?? message.channelID ?? undefined
 
-	convertedRows.set(String(id), {
+	const source = {
 		url,
 		width,
 		height,
 		guildId: guildId == null ? undefined : String(guildId),
 		channelId: channelId == null ? undefined : String(channelId),
-	})
+	}
+	convertedRows.set(String(id), source)
+	convertedUrls.set(url, source)
 
 	if (convertedRows.size > 100) {
 		const first = convertedRows.keys().next().value
 		if (first !== undefined) convertedRows.delete(first)
+	}
+	if (convertedUrls.size > 100) {
+		const first = convertedUrls.keys().next().value
+		if (first !== undefined) convertedUrls.delete(first)
 	}
 }
 
@@ -222,13 +238,27 @@ function openConvertedMedia(event: any): boolean {
 	if (!openMediaModal || !isRecord(event)) return false
 
 	const messageId =
-		event.messageId ?? event.message_id ?? event.message?.id ?? event.id
-	const source =
+		event.messageId ??
+		event.message_id ??
+		event.message?.id ??
+		event.id ??
+		event.nativeEvent?.messageId ??
+		event.nativeEvent?.message_id
+	const byId =
 		messageId == null ? undefined : convertedRows.get(String(messageId))
+
+	const eventUrl =
+		(typeof event.url === 'string' && event.url) ||
+		(typeof event.sourceURI === 'string' && event.sourceURI) ||
+		(typeof event.uri === 'string' && event.uri) ||
+		(typeof event.nativeEvent?.url === 'string' && event.nativeEvent.url)
+	const byUrl = eventUrl ? convertedUrls.get(eventUrl) : undefined
+
+	const source = byId ?? byUrl
 	if (!source) return false
 
-	const pageX = positiveNumber(event.pageX)
-	const pageY = positiveNumber(event.pageY)
+	const pageX = positiveNumber(event.pageX ?? event.nativeEvent?.pageX)
+	const pageY = positiveNumber(event.pageY ?? event.nativeEvent?.pageY)
 
 	try {
 		openMediaModal({
@@ -273,6 +303,25 @@ function isAnimated(
 	)
 }
 
+function contentTypeFor(url: string): string {
+	const ext = url.match(/\.([a-z0-9]+)(?:\?|$)/i)?.[1]?.toLowerCase()
+	switch (ext) {
+		case 'jpg':
+		case 'jpeg':
+			return 'image/jpeg'
+		case 'gif':
+			return 'image/gif'
+		case 'webp':
+			return 'image/webp'
+		case 'bmp':
+			return 'image/bmp'
+		case 'avif':
+			return 'image/avif'
+		default:
+			return 'image/png'
+	}
+}
+
 function imageEmbed(
 	url: string,
 	width: number | undefined,
@@ -283,10 +332,17 @@ function imageEmbed(
 		srcIsAnimated: animated,
 		srclsAnimated: animated,
 	}
+	const mediaFields = {
+		contentType: contentTypeFor(url),
+		placeholder: '',
+		placeholderVersion: 1,
+		flags: animated ? 1 : 0,
+	}
 	const image: Record<string, unknown> = {
 		url,
 		proxyURL: url,
 		...animatedFields,
+		...mediaFields,
 	}
 	if (width !== undefined) image.width = width
 	if (height !== undefined) image.height = height
@@ -505,6 +561,7 @@ export default plugin<{ jsonStorage: Settings }>({
 		cleanup(() => {
 			openMediaModal = undefined
 			convertedRows.clear()
+			convertedUrls.clear()
 		})
 
 		cleanup(
@@ -515,6 +572,22 @@ export default plugin<{ jsonStorage: Settings }>({
 						exports?.openMediaModal ??
 						(typeof exports === 'function' ? exports : undefined)
 					if (typeof opener === 'function') openMediaModal = opener
+				},
+				{ max: 5 },
+			),
+		)
+
+		cleanup(
+			getModules(
+				withName('MediaModal'),
+				raw => {
+					const exports = raw as any
+					const opener =
+						exports?.openMediaModal ??
+						exports?.default?.openMediaModal ??
+						(typeof exports === 'function' ? exports : undefined)
+					if (!openMediaModal && typeof opener === 'function')
+						openMediaModal = opener
 				},
 				{ max: 5 },
 			),
