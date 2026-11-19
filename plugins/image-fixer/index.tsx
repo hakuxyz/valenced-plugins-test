@@ -169,8 +169,33 @@ function isSpoiler(attachment: Record<string, any>): boolean {
 	return attachment.spoiler === true || attachment.isSpoiler === true
 }
 
-function imageEmbed(url: string, width?: number, height?: number) {
-	const image: Record<string, unknown> = { url, proxyURL: url }
+function isAnimated(
+	attachment: Record<string, any>,
+	url: string | undefined,
+): boolean {
+	if (attachment.animated === true || attachment.isAnimated === true)
+		return true
+
+	const type = attachment.content_type ?? attachment.contentType
+	if (type === 'image/gif') return true
+
+	return (
+		/\.gif(?:\?|$)/i.test(String(attachment.filename ?? '')) ||
+		(!!url && /\.gif(?:\?|$)/i.test(url))
+	)
+}
+
+function imageEmbed(
+	url: string,
+	width: number | undefined,
+	height: number | undefined,
+	animated: boolean,
+) {
+	const image: Record<string, unknown> = {
+		url,
+		proxyURL: url,
+		srclsAnimated: animated,
+	}
 	if (width !== undefined) image.width = width
 	if (height !== undefined) image.height = height
 
@@ -250,6 +275,7 @@ function transform(result: any, data: RowData | undefined): any {
 					url,
 					positiveNumber(item.width),
 					positiveNumber(item.height),
+					isAnimated(item, originalUrl),
 				),
 			)
 			converted = true
