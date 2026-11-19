@@ -20,6 +20,8 @@ const beforeLoose = before as unknown as LooseBefore
 
 const requestedGuilds = new Set<string>()
 const memberListUpdateCounts = new Map<string, number>()
+const extendedRangeMax = new Map<string, number>()
+const lastSubscriptionChannel = new Map<string, string>()
 let lastFreezeSetting = false
 let requestMembersFn:
 	| ((guildId: string, query?: string, limit?: number) => void)
@@ -193,6 +195,16 @@ function mergeRanges(
 	return out.sort((a, b) => a[0] - b[0] || a[1] - b[1])
 }
 
+function maxRangeEnd(ranges: [number, number][]): number {
+	let highest = 99
+	for (const range of ranges) {
+		if (Array.isArray(range) && Number.isFinite(range[1])) {
+			highest = Math.max(highest, Number(range[1]))
+		}
+	}
+	return highest
+}
+
 function buildRequestedRanges(
 	current: [number, number][],
 	guildId: string,
@@ -203,19 +215,14 @@ function buildRequestedRanges(
 	)
 	const maxEnd =
 		Number.isFinite(memberCount) && memberCount > 0
-			? Math.min(memberCount, 10000)
-			: 3000
+			? Math.min(memberCount, 20000)
+			: 5000
 
-	let highest = 99
-	for (const range of current) {
-		if (Array.isArray(range) && Number.isFinite(range[1])) {
-			highest = Math.max(highest, Number(range[1]))
-		}
-	}
+	const highest = maxRangeEnd(current)
 
 	// Keep the client's requested/visible ranges and prefetch ahead while
 	// scrolling. A wider window helps reach lower/offline groups in lazy guilds.
-	const target = Math.min(maxEnd, Math.max(highest + 1000, 999))
+	const target = Math.min(maxEnd, Math.max(highest + 1500, 1499))
 	const wanted: [number, number][] = [[0, 99]]
 	for (let start = 100; start <= target; start += 100) {
 		wanted.push([start, start + 99])
@@ -256,8 +263,27 @@ function augmentSubscriptionRangesForGuild(
 	}
 }
 
+function rememberSubscriptionChannels(action: any): void {
+	try {
+		const subs = action?.subscriptions
+		if (!subs || typeof subs !== 'object' || Array.isArray(subs)) return
+		for (const guildId of Object.keys(subs)) {
+			if (!/^\d+$/.test(guildId)) continue
+			const channels = subs[guildId]?.channels
+			if (!channels || typeof channels !== 'object') continue
+			for (const channelId of Object.keys(channels)) {
+				if (/^\d+$/.test(channelId)) {
+					lastSubscriptionChannel.set(guildId, channelId)
+					break
+				}
+			}
+		}
+	} catch {}
+}
+
 function augmentSubscriptionsAction(action: any, settings: Settings): void {
 	if (!settings.showAllMembers || !action || typeof action !== 'object') return
+	rememberSubscriptionChannels(action)
 	const subs = action.subscriptions
 	if (!subs || typeof subs !== 'object' || Array.isArray(subs)) return
 
@@ -278,6 +304,8 @@ function augmentSingleChannelSubscription(
 
 	if (action.channels && typeof action.channels === 'object') {
 		for (const channelId of Object.keys(action.channels)) {
+			if (/^\d+$/.test(channelId))
+				lastSubscriptionChannel.set(guildId, channelId)
 			augmentRangeContainer(action.channels[channelId], guildId)
 		}
 	}
@@ -285,6 +313,51 @@ function augmentSingleChannelSubscription(
 	if (Array.isArray(action.ranges)) {
 		augmentRangeContainer(action.ranges, guildId)
 	}
+}
+
+function maybeExtendMemberListLoading(action: any, settings: Settings): void {
+	if (!settings.showAllMembers) return
+	const guildId = guildIdFromAction(action)
+	if (!guildId || !isLargeOrUnknownGuild(guildId)) return
+
+	const channelId =
+		(typeof action?.channelId === 'string' && action.channelId) ||
+		(typeof action?.channel_id === 'string' && action.channel_id) ||
+		lastSubscriptionChannel.get(guildId)
+	if (!channelId) return
+
+	const key = `${guildId}:${channelId}`
+	const prev = extendedRangeMax.get(key) ?? 99
+	const next = Math.min(prev + 1000, 20000)
+	if (next <= prev) return
+	extendedRangeMax.set(key, next)
+
+	const ranges: [number, number][] = []
+	for (let start = 0; start <= next; start += 100) {
+		ranges.push([start, start + 99])
+	}
+
+	try {
+		Dispatcher.dispatch({
+			type: 'GUILD_SUBSCRIPTIONS',
+			subscriptions: {
+				[guildId]: {
+					channels: {
+						[channelId]: ranges,
+					},
+				},
+			},
+		} as any)
+	} catch {}
+
+	try {
+		Dispatcher.dispatch({
+			type: 'GUILD_SUBSCRIPTIONS_CHANNEL',
+			guildId,
+			channelId,
+			ranges,
+		} as any)
+	} catch {}
 }
 
 function memberListKey(action: any): string | undefined {
@@ -338,6 +411,7 @@ function bootstrap({ cleanup: clean, jsonStorage: storage }: any) {
 							args[0] = { type: 'HAKUXYZ_FULL_MEMBER_LIST_BLOCKED' }
 							return args
 						}
+						maybeExtendMemberListLoading(action, settings)
 					}
 
 					if (
@@ -372,6 +446,8 @@ function bootstrap({ cleanup: clean, jsonStorage: storage }: any) {
 	cleanup(() => {
 		requestedGuilds.clear()
 		memberListUpdateCounts.clear()
+		extendedRangeMax.clear()
+		lastSubscriptionChannel.clear()
 		lastFreezeSetting = false
 		requestMembersFn = undefined
 		requestMembersSearched = false
