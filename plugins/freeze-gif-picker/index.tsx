@@ -125,11 +125,15 @@ function patchReactCreateElement(cleanup: Cleanup): void {
 	})
 }
 
-function patchReactNativeCreateElement(cleanup: Cleanup): void {
+function patchSetNativeProps(cleanup: Cleanup): void {
 	try {
 		cleanup(
 			getModules(
-				withName('createElement'),
+				(m: any) => {
+					if (!m || typeof m !== 'object') return false
+					const keys = Object.keys(m)
+					return keys.some(k => /Image|View|Native/i.test(k))
+				},
 				(m: any) => {
 					try {
 						if (!m || typeof m !== 'object') return
@@ -137,26 +141,29 @@ function patchReactNativeCreateElement(cleanup: Cleanup): void {
 							(t: any) => t && typeof t === 'object',
 						)
 						for (const t of targets) {
-							const orig = t.createElement
-							if (typeof orig !== 'function' || patchedFns.has(orig)) continue
-							patchedFns.add(orig)
-							t.createElement = function patchedCreateElement(
-								type: any,
+							const setNativeProps = t.setNativeProps
+							if (
+								typeof setNativeProps !== 'function' ||
+								patchedFns.has(setNativeProps)
+							)
+								continue
+							patchedFns.add(setNativeProps)
+							t.setNativeProps = function patchedSetNativeProps(
+								thisArg: any,
 								props: any,
-								...children: any[]
 							) {
 								try {
-									if (isMediaType(type)) {
+									if (props && typeof props === 'object') {
 										const frozen = freezeElementProps(props)
 										if (frozen !== props)
-											return orig.call(this, frozen, ...children)
+											return setNativeProps.call(thisArg, frozen)
 									}
 								} catch {}
-								return orig.call(this, type, props, ...children)
+								return setNativeProps.call(thisArg, props)
 							}
 							cleanup(() => {
 								try {
-									t.createElement = orig
+									t.setNativeProps = setNativeProps
 								} catch {}
 							})
 						}
@@ -214,7 +221,7 @@ function patchGifPickerComponents(cleanup: Cleanup): void {
 export default plugin({
 	start({ cleanup }) {
 		patchReactCreateElement(cleanup)
-		patchReactNativeCreateElement(cleanup)
+		patchSetNativeProps(cleanup)
 		patchGifPickerComponents(cleanup)
 		debugLogOnce('started', 'freeze-gif-picker active')
 	},
