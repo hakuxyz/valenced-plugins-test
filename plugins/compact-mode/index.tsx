@@ -248,10 +248,12 @@ function truncateName(name: string): string {
 }
 
 function usernameNode(out: any, raw: any): AstNode {
-	const name = truncateName(displayName(out, raw))
+	const fullName = displayName(out, raw)
+	const name = truncateName(fullName)
 	const tapId = raw?.author?.id ? String(raw.author.id) : undefined
-	if (name && tapId) {
-		usernameTapMap.set(name, tapId)
+	if (tapId) {
+		if (name) usernameTapMap.set(name, tapId)
+		if (fullName && fullName !== name) usernameTapMap.set(fullName, tapId)
 		if (usernameTapMap.size > 200) usernameTapMap.clear()
 	}
 	return usernameTextNode(name)
@@ -263,17 +265,61 @@ function openProfile(userId: string): void {
 	} catch {}
 }
 
+let tapTargetLogs = 0
+function logTapFound(kind: string, userId: string): void {
+	if (tapTargetLogs < 20) {
+		tapTargetLogs++
+		console.log('[CompactMode] tap target found:', kind, userId)
+	}
+}
+
+function firstString(value: any): string | undefined {
+	if (typeof value === 'string' && value) return value
+	if (Array.isArray(value)) {
+		for (const item of value) {
+			const found = firstString(item)
+			if (found) return found
+		}
+		return undefined
+	}
+	if (value && typeof value === 'object') return firstString(value.children)
+	return undefined
+}
+
+function stringProps(props: Record<string, any>): string[] {
+	const out: string[] = []
+	for (const key of Object.keys(props)) {
+		const value = props[key]
+		if (typeof value === 'string' && value) out.push(value)
+		const uri = Array.isArray(value)
+			? value[0]?.uri
+			: (value?.uri ?? value?.source?.uri)
+		if (typeof uri === 'string' && uri) out.push(uri)
+		const children = firstString(value)
+		if (children) out.push(children)
+	}
+	return out
+}
+
 function findTapTarget(el: any): string | undefined {
 	if (!el || typeof el !== 'object') return undefined
 	const props = (el as any).props
 	if (!props) return undefined
 
-	const source = props.source
-	const uri = Array.isArray(source) ? source[0]?.uri : source?.uri
-	if (uri && avatarTapMap.get(uri)) return avatarTapMap.get(uri)
-
-	const text = props.children
-	if (typeof text === 'string' && text) return usernameTapMap.get(text)
+	for (const str of stringProps(props)) {
+		const avatarId = avatarTapMap.get(str)
+		if (avatarId) {
+			logTapFound('avatar', avatarId)
+			return avatarId
+		}
+	}
+	for (const str of stringProps(props)) {
+		const userId = usernameTapMap.get(str)
+		if (userId) {
+			logTapFound('username', userId)
+			return userId
+		}
+	}
 	return undefined
 }
 
@@ -517,11 +563,14 @@ export default plugin<{ jsonStorage: Settings }>({
 			),
 		)
 
+		let chatFound = false
 		cleanup(
 			getModules(
-				withProps('Button', 'Text', 'View'),
+				withProps('Pressable'),
 				exports => {
-					RN = exports
+					if (RN?.Pressable) return
+					const candidate = (exports as any)?.default ?? (exports as any)
+					if (candidate?.Pressable) RN = candidate
 				},
 				{ max: 5 },
 			),
@@ -534,6 +583,7 @@ export default plugin<{ jsonStorage: Settings }>({
 					const Chat =
 						(exports as any)?.default ?? (exports as any)?.Chat ?? exports
 					if (!Chat?.prototype) return
+					chatFound = true
 					ensureWritable(Chat.prototype, 'render')
 					cleanup(
 						afterLoose(Chat.prototype, 'render', (result: any) => {
@@ -547,6 +597,15 @@ export default plugin<{ jsonStorage: Settings }>({
 				},
 				{ max: 5 },
 			),
+		)
+
+		console.log(
+			'[CompactMode] start: showUserProfile=',
+			!!showUserProfile,
+			'RN.Pressable=',
+			!!RN?.Pressable,
+			'ChatFound=',
+			chatFound,
 		)
 
 		cleanup(
