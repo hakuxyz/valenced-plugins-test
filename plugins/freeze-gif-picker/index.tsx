@@ -28,7 +28,6 @@ const ANIMATION_PROPS: Record<string, boolean> = {
 	loop: false,
 }
 
-// RN-Host-Component-Namen (minimierte Builds nutzen Strings als type).
 const MEDIA_HOST_NAMES = new Set([
 	'Image',
 	'Video',
@@ -40,11 +39,7 @@ const MEDIA_HOST_NAMES = new Set([
 	'RNCView',
 ])
 
-const logged = new Set<string>()
-
-function debugLog(key: string, ...args: any[]) {
-	if (logged.has(key)) return
-	logged.add(key)
+function debugLogOnce(_key: string, ...args: any[]) {
 	try {
 		console.log('[freeze-gif-picker]', ...args)
 	} catch {}
@@ -72,18 +67,6 @@ function freezeElementProps(props: any): any {
 		next = { ...original }
 		changed = true
 		next.source = original.source
-	}
-
-	// Quelle protokollieren zur Diagnose, wenn sie noch animiert sein könnte.
-	const source = original.source ?? (next as any).source
-	const sourceUri =
-		typeof source === 'string'
-			? source
-			: source && typeof source === 'object'
-				? (source.uri ?? source.url ?? source.src)
-				: undefined
-	if (typeof sourceUri === 'string' && sourceUri) {
-		debugLog(`media:${sourceUri}`, 'frozen media props', props)
 	}
 
 	return changed ? next : props
@@ -249,7 +232,8 @@ function patchReactNativeImage(cleanup: Cleanup): void {
 	} catch {}
 }
 
-// Sehr weitreichend: patcht createElement auf allen Modulen, die RN-kompatibel sein könnten.
+// Patcht createElement auf ALLEN Modulen, die es exportieren – sehr weitreichend,
+// damit wir auch Pfade erwischen, die nicht über React oder react-native laufen.
 function patchAllCreateElements(cleanup: Cleanup): void {
 	try {
 		cleanup(
@@ -276,12 +260,90 @@ function patchAllCreateElements(cleanup: Cleanup): void {
 	} catch {}
 }
 
+// Patcht native ImageView-Manager / RCTImageView direkt, bevor Props ans Native-Modul gehen.
+function patchNativeImageViewManager(cleanup: Cleanup): void {
+	try {
+		cleanup(
+			getModules(
+				(m: any) => {
+					if (!m || typeof m !== 'object') return false
+					const keys = Object.keys(m)
+					return (
+						keys.some(k =>
+							/ImageViewManager|RCTImageView|ImageManager/i.test(k),
+						) ||
+						keys.some(k => /updateProps|createView|setNativeProps/i.test(k))
+					)
+				},
+				(m: any) => {
+					try {
+						if (!m || typeof m !== 'object') return
+						const targets = [m, m.default].filter(
+							(t: any) => t && typeof t === 'object',
+						)
+						for (const t of targets) {
+							// updateProps(props) oder createView(props) oder setNativeProps(props)
+							for (const key of Object.keys(t)) {
+								const val = (t as any)[key]
+								if (typeof val !== 'function' || patchedFns.has(val)) continue
+								if (
+									key !== 'updateProps' &&
+									key !== 'createView' &&
+									key !== 'setNativeProps' &&
+									!/updateProps|createView|setNativeProps/i.test(key)
+								)
+									continue
+								patchedFns.add(val)
+								;(t as any)[key] = function patchedNativeFn(
+									thisArg: any,
+									...a: any[]
+								) {
+									try {
+										// Props meist an Index 0 oder 1 (createView(tag, props))
+										let propsIdx = -1
+										for (let i = 0; i < a.length; i++) {
+											if (
+												a[i] &&
+												typeof a[i] === 'object' &&
+												!Array.isArray(a[i])
+											) {
+												propsIdx = i
+												break
+											}
+										}
+										if (propsIdx !== -1) {
+											const frozen = freezeElementProps(a[propsIdx])
+											if (frozen !== a[propsIdx]) {
+												const nextArgs = [...a]
+												nextArgs[propsIdx] = frozen
+												return val.apply(thisArg, nextArgs)
+											}
+										}
+									} catch {}
+									return val.apply(thisArg, a)
+								}
+								cleanup(() => {
+									try {
+										;(t as any)[key] = val
+									} catch {}
+								})
+							}
+						}
+					} catch {}
+				},
+				{ returnNamespace: true },
+			),
+		)
+	} catch {}
+}
+
 export default plugin({
 	start({ cleanup }) {
 		patchReactCreateElement(cleanup)
 		patchSetNativeProps(cleanup)
 		patchReactNativeImage(cleanup)
 		patchAllCreateElements(cleanup)
-		debugLog('started', 'freeze-gif-picker active')
+		patchNativeImageViewManager(cleanup)
+		debugLogOnce('started', 'freeze-gif-picker active')
 	},
 })
