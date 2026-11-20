@@ -407,7 +407,12 @@ const autoplayModuleFilter = createFilterGenerator<[]>(
 	FilterScopes.Initialized,
 )
 
-const ANIMATED_THUMBNAIL_NAME = 'shouldUseAnimatedWebPThumbnail'
+const AUTOPLAY_FUNCTION_NAMES = new Set([
+	'shouldUseAnimatedWebPThumbnail',
+	'shouldAutoPlayGif',
+	'shouldAutoplayGif',
+])
+
 const patchedFunctions = new Set<(...args: any[]) => any>()
 
 const animatedThumbnailFilter = createFilterGenerator<[]>(
@@ -421,7 +426,7 @@ const animatedThumbnailFilter = createFilterGenerator<[]>(
 					const value = parent[key]
 					return (
 						typeof value === 'function' &&
-						value.name === ANIMATED_THUMBNAIL_NAME
+						AUTOPLAY_FUNCTION_NAMES.has(value.name)
 					)
 				}),
 			)
@@ -448,14 +453,15 @@ function patchAnimatedThumbnail(cleanup: Cleanup): void {
 							try {
 								const original = parent[key]
 								if (typeof original !== 'function') continue
-								if (original.name !== ANIMATED_THUMBNAIL_NAME) continue
+								if (!AUTOPLAY_FUNCTION_NAMES.has(original.name)) continue
 								if (patchedFunctions.has(original)) continue
 								ensureWritable(parent, key)
 								patchedFunctions.add(original)
 								cleanup(insteadLoose(parent, key, () => false))
 								logOnce(
-									'animated:patched',
-									'patched animated thumbnail selector',
+									`autoplayfn:${original.name}`,
+									'patched autoplay function',
+									original.name,
 									String(id),
 									key,
 								)
@@ -517,11 +523,29 @@ export default plugin({
 								? Object.keys(target)
 								: safeStringify(target, 400),
 						)
+						if (isRecord(target) && typeof target.getSetting === 'function') {
+							try {
+								logOnce(
+									'gifautoplay:setting',
+									'GifAutoPlay setting',
+									safeStringify(target.getSetting(), 600),
+								)
+							} catch (error) {
+								logOnce(
+									'gifautoplay:setting-error',
+									'GifAutoPlay getSetting failed',
+									String(error),
+								)
+							}
+						}
 					}
 				},
 				{ returnNamespace: true },
 			),
 		)
-		logOnce('started', 'freeze-gif-picker active 1.1.8 (lazy thumbnail patch)')
+		logOnce(
+			'started',
+			'freeze-gif-picker active 1.1.9 (autoplay fn diagnostics)',
+		)
 	},
 })
