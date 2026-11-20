@@ -40,7 +40,11 @@ const MEDIA_HOST_NAMES = new Set([
 	'RNCView',
 ])
 
-function debugLogOnce(_key: string, ...args: any[]) {
+const logged = new Set<string>()
+
+function debugLog(key: string, ...args: any[]) {
+	if (logged.has(key)) return
+	logged.add(key)
 	try {
 		console.log('[freeze-gif-picker]', ...args)
 	} catch {}
@@ -70,6 +74,18 @@ function freezeElementProps(props: any): any {
 		next.source = original.source
 	}
 
+	// Quelle protokollieren zur Diagnose, wenn sie noch animiert sein könnte.
+	const source = original.source ?? (next as any).source
+	const sourceUri =
+		typeof source === 'string'
+			? source
+			: source && typeof source === 'object'
+				? (source.uri ?? source.url ?? source.src)
+				: undefined
+	if (typeof sourceUri === 'string' && sourceUri) {
+		debugLog(`media:${sourceUri}`, 'frozen media props', props)
+	}
+
 	return changed ? next : props
 }
 
@@ -81,6 +97,41 @@ function isMediaType(type: any): boolean {
 	const name = (type as any).name ?? (type as any).displayName ?? ''
 	if (typeof name === 'string' && MEDIA_HOST_NAMES.has(name)) return true
 	return false
+}
+
+function patchCreateElementOnObject(
+	obj: any,
+	key: string,
+	cleanup: Cleanup,
+	propsIndex: number,
+): void {
+	if (!obj || typeof obj !== 'object') return
+	const orig = obj[key]
+	if (typeof orig !== 'function' || patchedFns.has(orig)) return
+	patchedFns.add(orig)
+
+	obj[key] = function patchedCreateElement(thisArg: any, ...a: any[]) {
+		try {
+			if (a[propsIndex] && typeof a[propsIndex] === 'object') {
+				const type = a[0]
+				if (isMediaType(type)) {
+					const frozen = freezeElementProps(a[propsIndex])
+					if (frozen !== a[propsIndex]) {
+						const nextArgs = [...a]
+						nextArgs[propsIndex] = frozen
+						return orig.apply(thisArg, nextArgs)
+					}
+				}
+			}
+		} catch {}
+		return orig.apply(thisArg, a)
+	}
+
+	cleanup(() => {
+		try {
+			obj[key] = orig
+		} catch {}
+	})
 }
 
 function patchReactCreateElement(cleanup: Cleanup): void {
@@ -172,13 +223,9 @@ function patchReactNativeImage(cleanup: Cleanup): void {
 							(t: any) => t && typeof t === 'object',
 						)
 						for (const t of targets) {
-							// Einige RN-Builds exportieren Image als Klasse/Component mit createElement/setNativeProps intern.
 							for (const key of Object.keys(t)) {
 								const val = (t as any)[key]
 								if (typeof val !== 'function' || patchedFns.has(val)) continue
-								const name = String(
-									(val as any).displayName ?? (val as any).name ?? key,
-								)
 								if (
 									key !== 'createElement' &&
 									key !== 'setNativeProps' &&
@@ -186,34 +233,40 @@ function patchReactNativeImage(cleanup: Cleanup): void {
 								)
 									continue
 								patchedFns.add(val)
-								const orig = val
-								;(t as any)[key] = function patchedMediaFn(
-									thisArg: any,
-									...a: any[]
-								) {
-									try {
-										// createElement(Image, props, ...) -> props an Index 1
-										// setNativeProps(props) -> props an Index 0
-										const isCreateElement =
-											key === 'createElement' || /createElement/i.test(key)
-										const propsIndex = isCreateElement ? 1 : 0
-										if (a[propsIndex] && typeof a[propsIndex] === 'object') {
-											const frozen = freezeElementProps(a[propsIndex])
-											if (frozen !== a[propsIndex]) {
-												const nextArgs = [...a]
-												nextArgs[propsIndex] = frozen
-												return orig.apply(thisArg, nextArgs)
-											}
-										}
-									} catch {}
-									return orig.apply(thisArg, a)
-								}
-								cleanup(() => {
-									try {
-										;(t as any)[key] = orig
-									} catch {}
-								})
+								patchCreateElementOnObject(
+									t,
+									key,
+									cleanup,
+									key === 'createElement' ? 1 : 0,
+								)
 							}
+						}
+					} catch {}
+				},
+				{ returnNamespace: true },
+			),
+		)
+	} catch {}
+}
+
+// Sehr weitreichend: patcht createElement auf allen Modulen, die RN-kompatibel sein könnten.
+function patchAllCreateElements(cleanup: Cleanup): void {
+	try {
+		cleanup(
+			getModules(
+				(m: any) => {
+					if (!m || typeof m !== 'object') return false
+					const keys = Object.keys(m)
+					return keys.includes('createElement')
+				},
+				(m: any) => {
+					try {
+						if (!m || typeof m !== 'object') return
+						const targets = [m, m.default].filter(
+							(t: any) => t && typeof t === 'object',
+						)
+						for (const t of targets) {
+							patchCreateElementOnObject(t, 'createElement', cleanup, 1)
 						}
 					} catch {}
 				},
@@ -228,6 +281,7 @@ export default plugin({
 		patchReactCreateElement(cleanup)
 		patchSetNativeProps(cleanup)
 		patchReactNativeImage(cleanup)
-		debugLogOnce('started', 'freeze-gif-picker active')
+		patchAllCreateElements(cleanup)
+		debugLog('started', 'freeze-gif-picker active')
 	},
 })
