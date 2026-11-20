@@ -97,6 +97,7 @@ function isAnimatedMediaUri(uri: unknown): boolean {
 	if (/\.gifv(?:[?#]|$)/i.test(uri)) return true
 	if (/[?&](?:format|fm)=gif(?:&|$)/i.test(uri)) return true
 	if (/\/giphy\.gif(?:[?#]|$)/i.test(uri)) return true
+	if (/[?&]animated=true(?:&|$)/i.test(uri)) return true
 	return false
 }
 
@@ -112,6 +113,28 @@ function isKnownGifProviderHost(hostname: string): boolean {
 	)
 }
 
+function setStaticQueryParams(url: URL, aggressive: boolean): boolean {
+	let changed = false
+	const animated = url.searchParams.get('animated')
+	if (animated && animated.toLowerCase() === 'true') {
+		url.searchParams.set('animated', 'false')
+		changed = true
+	}
+	if (aggressive) {
+		const autoplay = url.searchParams.get('autoplay')
+		if (autoplay && autoplay !== '0' && autoplay.toLowerCase() !== 'false') {
+			url.searchParams.set('autoplay', 'false')
+			changed = true
+		}
+		const play = url.searchParams.get('play')
+		if (play && play !== '0' && play.toLowerCase() !== 'false') {
+			url.searchParams.set('play', 'false')
+			changed = true
+		}
+	}
+	return changed
+}
+
 function toStaticMediaUri(
 	uri: string,
 	aggressive: boolean,
@@ -120,6 +143,10 @@ function toStaticMediaUri(
 		const url = new URL(uri)
 		const host = url.hostname.toLowerCase()
 		const path = url.pathname
+		let changed = false
+
+		// Strip animation-related query params where supported.
+		if (setStaticQueryParams(url, aggressive)) changed = true
 
 		// Discord media proxy / external proxy: prefer static formats.
 		if (
@@ -127,21 +154,23 @@ function toStaticMediaUri(
 			host === 'cdn.discordapp.com' ||
 			host.endsWith('.discordapp.net')
 		) {
+			const fmt = (url.searchParams.get('format') || '').toLowerCase()
 			if (/\.gif$/i.test(path)) {
 				url.pathname = path.replace(/\.gif$/i, '.png')
 				url.searchParams.set('format', 'png')
 				url.searchParams.delete('frame')
-				return url.toString()
-			}
-			if (url.searchParams.get('format') === 'gif') {
+				changed = true
+			} else if (fmt === 'gif') {
 				url.searchParams.set('format', 'webp')
 				url.searchParams.delete('frame')
-				return url.toString()
-			}
-			if (aggressive) {
-				// For proxied external previews (common in GIF picker), force a non-animated format.
-				if (/\/external\//i.test(path) || /images-ext/i.test(host)) {
-					const fmt = (url.searchParams.get('format') || '').toLowerCase()
+				changed = true
+			} else if (aggressive) {
+				// External/proxied picker previews: force a static format if not already static.
+				if (
+					/\/external\//i.test(path) ||
+					/images-ext/i.test(host) ||
+					/\/attachments\//i.test(path)
+				) {
 					if (
 						fmt !== 'png' &&
 						fmt !== 'webp' &&
@@ -149,10 +178,11 @@ function toStaticMediaUri(
 						fmt !== 'jpg'
 					) {
 						url.searchParams.set('format', 'webp')
-						return url.toString()
+						changed = true
 					}
 				}
 			}
+			return changed ? url.toString() : undefined
 		}
 
 		if (host.includes('giphy.com')) {
@@ -164,8 +194,8 @@ function toStaticMediaUri(
 				url.pathname = path.replace(/\.gif$/i, '_s.gif')
 				return url.toString()
 			}
-			// mp4 previews: can't make static reliably
-			return undefined
+			// mp4/webp previews: try stripping animated params if any were changed
+			return changed ? url.toString() : undefined
 		}
 
 		if (host.endsWith('tenor.com')) {
@@ -175,23 +205,28 @@ function toStaticMediaUri(
 				return url.toString()
 			}
 			// Tenor often uses mp4/webm for previews; no guaranteed static sibling.
-			return undefined
+			return changed ? url.toString() : undefined
 		}
 
 		if (host.endsWith('klipy.com')) {
-			// Klipy formats vary; try common still-ish conversions best-effort.
+			// Klipy: animated previews may be webp/gif with animated=true; try forcing static.
 			if (/\.gif$/i.test(path)) {
 				url.pathname = path.replace(/\.gif$/i, '.webp')
-				return url.toString()
+				changed = true
 			}
-			if (aggressive) {
-				const fmt = url.searchParams.get('format')
-				if (fmt === 'gif') {
-					url.searchParams.set('format', 'webp')
-					return url.toString()
-				}
+			const fmt = (url.searchParams.get('format') || '').toLowerCase()
+			if (fmt === 'gif') {
+				url.searchParams.set('format', 'webp')
+				changed = true
 			}
-			return undefined
+			// Ensure animated=false is present in aggressive picker context for klipy static assets.
+			if (aggressive && url.searchParams.get('animated') !== 'false') {
+				// only add if we already touched or it looked animated-ish; but better to be explicit
+				// when called from aggressive freeze path.
+				url.searchParams.set('animated', 'false')
+				changed = true
+			}
+			return changed ? url.toString() : undefined
 		}
 
 		if (/\.gif$/i.test(path)) {
@@ -199,13 +234,16 @@ function toStaticMediaUri(
 			return url.toString()
 		}
 
-		if (aggressive && /[?&](?:format|fm)=gif(?:&|$)/i.test(url.search)) {
+		if (/[?&](?:format|fm)=gif(?:&|$)/i.test(url.search)) {
 			url.searchParams.set(
 				url.searchParams.has('format') ? 'format' : 'fm',
 				'webp',
 			)
-			return url.toString()
+			changed = true
 		}
+
+		if (aggressive && changed) return url.toString()
+		return changed ? url.toString() : undefined
 	} catch {
 		if (/\.gif(?:[?#]|$)/i.test(uri))
 			return uri.replace(/\.gif(?=[?#]|$)/i, '.png')
@@ -282,9 +320,6 @@ function rewriteUriMaybe(
 	const converted = toStaticMediaUri(uri, aggressive)
 	if (converted && converted !== uri) return converted
 
-	// If we're in aggressive (gif picker) context and it's a known provider/proxy but we
-	// couldn't derive a still URL (e.g. mp4 preview), keep as-is; render patching may still
-	// help if a static hint exists elsewhere. Log for diagnosis.
 	try {
 		const u = new URL(uri)
 		if (aggressive && isKnownGifProviderHost(u.hostname)) {
@@ -497,12 +532,6 @@ function patchFunctionComponent(
 			},
 		)
 		cleanup(unpatch)
-
-		// Also wrap the render invocation context by replacing function to track depth.
-		// Simpler: patch as instead-like behavior not available; instead we wrap createElement
-		// to always freeze when inside our wrapped render by temporarily flagging via a stack.
-		// We can approximate by setting depth around common render methods too, but function
-		// components are called by React internals. So rely on createElement+tree freeze.
 	} catch {}
 }
 
@@ -598,8 +627,6 @@ function patchCreateElement(cleanup: Cleanup): void {
 			try {
 				const aggressive = gifPickerRenderDepth > 0
 				if (isRecord(props)) {
-					// Detect if we're creating a GIF picker component to track render depth on next renders
-					// (best-effort via tree wrapping), and aggressively freeze media-like props.
 					const sourceUri = isRecord(props.source)
 						? (props.source.uri ?? props.source.url ?? props.source.src)
 						: (props.uri ?? props.url ?? props.src ?? props.imageUrl)
@@ -649,7 +676,6 @@ function patchCreateElement(cleanup: Cleanup): void {
 	} catch {}
 }
 
-// Track render depth by wrapping known GIF picker component functions as "instead"-style via manual wrap
 function wrapRenderFunctionsForDepth(cleanup: Cleanup): void {
 	const names = [
 		'GIFPicker',
@@ -695,7 +721,6 @@ function wrapRenderFunctionsForDepth(cleanup: Cleanup): void {
 										gifPickerRenderDepth--
 									}
 								}
-								// preserve common statics
 								try {
 									;(obj as any)[key].displayName =
 										(fn as any).displayName ?? (fn as any).name
