@@ -1,0 +1,20 @@
+{
+	"format": 1,
+	"id": "hakuxyz.no-top-emojis",
+	"name": "No Top Emojis",
+	"description": "Hide the Top Emojis in Server category so favorites stay first in the emoji picker.",
+	"author": "hakuxyz (https://github.com/hakuxyz \"GitHub\")",
+	"version": "1.0.0",
+	"icon": "FireIcon",
+	"dependencies": {
+		"valenced.api": {
+			"version": ">=1 <2"
+		},
+		"discord": {
+			"version": "*"
+		}
+	},
+	"dist": {
+		"script": "index.js"
+	}
+}
