@@ -249,31 +249,45 @@ function truncateName(name: string): string {
 }
 
 function dumpModulesDiag(): void {
-	const unsub = getModules(
-		(() => true) as unknown as any,
-		(exports: any) => {
-			if (exports == null || typeof exports !== 'object') return
-			try {
+	const names: string[] = []
+	const suf: string[] = []
+	const pressable: string[] = []
+	const chat: string[] = []
+	let scanned = 0
+	try {
+		const unsub = getModules(
+			(() => true) as unknown as any,
+			(exports: any) => {
+				if (exports == null || typeof exports !== 'object') return
+				scanned++
 				const name = String(exports.name ?? exports.displayName ?? '')
-				const hasSUF =
+				names.push(name || 'noname')
+				const def = exports.default
+				if (
 					typeof exports.showUserProfile === 'function' ||
-					typeof exports.default?.showUserProfile === 'function'
-				const hasPressable = typeof exports.Pressable === 'function'
-				const chatish = name !== '' && /chat/i.test(name)
-				if (hasSUF || hasPressable || chatish) {
-					console.log(
-						`[CM-DUMP] name=${name} showUserProfile=${hasSUF} Pressable=${hasPressable}`,
-					)
-				}
+					typeof def?.showUserProfile === 'function'
+				)
+					suf.push(name)
+				if (
+					typeof exports.Pressable === 'function' ||
+					typeof def?.Pressable === 'function'
+				)
+					pressable.push(name)
+				if (/chat/i.test(name)) chat.push(name)
+			},
+			{ max: 3000 },
+		)
+		setTimeout(() => {
+			try {
+				unsub()
 			} catch {}
-		},
-		{ max: 2000 },
-	)
+		}, 3000)
+	} catch {}
 	setTimeout(() => {
-		try {
-			unsub()
-		} catch {}
-	}, 5000)
+		toast(
+			`CM-DUMP n=${scanned} suf=[${suf.slice(0, 10).join('|')}] p=[${pressable.slice(0, 10).join('|')}] c=[${chat.slice(0, 10).join('|')}] samp=[${names.slice(0, 10).join('|')}]`,
+		)
+	}, 3500)
 }
 
 let treeDumpCount = 0
