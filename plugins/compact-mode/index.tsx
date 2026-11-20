@@ -1,3 +1,4 @@
+import { ToastActionCreators } from '@valenced/discord/actions'
 import { Stores } from '@valenced/discord/flux'
 import { getModules } from '@valenced/modules/finders'
 import { withName, withProps } from '@valenced/modules/finders/filters'
@@ -260,8 +261,15 @@ function usernameNode(out: any, raw: any): AstNode {
 }
 
 function openProfile(userId: string): void {
+	toast(`CM openProfile: ${userId}`)
 	try {
 		showUserProfile?.({ userId })
+	} catch {}
+}
+
+function toast(text: string): void {
+	try {
+		ToastActionCreators.open('HV_CM', { text, duration: 3000 })
 	} catch {}
 }
 
@@ -269,7 +277,7 @@ let tapTargetLogs = 0
 function logTapFound(kind: string, userId: string): void {
 	if (tapTargetLogs < 20) {
 		tapTargetLogs++
-		console.log('[CompactMode] tap target found:', kind, userId)
+		toast(`CM tap: ${kind} ${userId}`)
 	}
 }
 
@@ -606,6 +614,9 @@ export default plugin<{ jsonStorage: Settings }>({
 			!!RN?.Pressable,
 			'ChatFound=',
 			chatFound,
+		)
+		toast(
+			`CM start: showUserProfile=${!!showUserProfile} RN=${!!RN?.Pressable} Chat=${chatFound}`,
 		)
 
 		cleanup(
