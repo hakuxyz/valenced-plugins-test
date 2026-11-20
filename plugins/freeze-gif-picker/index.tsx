@@ -4,6 +4,7 @@ import {
 	FilterScopes,
 	withName,
 } from '@valenced/modules/finders/filters'
+import { instead } from '@valenced/patcher'
 import { afterJSX } from '@valenced/react/jsx-runtime'
 import { cloneElement } from 'react'
 import type { ElementType, ReactElement } from 'react'
@@ -43,6 +44,31 @@ function logOnce(key: string, ...args: unknown[]): void {
 
 function isRecord(value: unknown): value is Record<string, any> {
 	return value !== null && typeof value === 'object'
+}
+
+type LooseInstead = (
+	parent: Record<string, any>,
+	key: string,
+	hook: (args: any[], original: (...args: any[]) => any) => any,
+) => () => void
+
+const insteadLoose = instead as unknown as LooseInstead
+
+/** Metro re-exports members as getters. Make them writable before patching. */
+function ensureWritable(parent: any, key: string): void {
+	try {
+		const desc = Object.getOwnPropertyDescriptor(parent, key)
+		if (!desc || desc.configurable === false) return
+		if ('value' in desc && desc.writable) return
+		const value = parent[key]
+		if (typeof value !== 'function') return
+		Object.defineProperty(parent, key, {
+			value,
+			writable: true,
+			enumerable: desc.enumerable,
+			configurable: true,
+		})
+	} catch {}
 }
 
 function isComponentValue(value: unknown): boolean {
@@ -377,6 +403,68 @@ const autoplayModuleFilter = createFilterGenerator<[]>(
 	FilterScopes.Initialized,
 )
 
+const ANIMATED_THUMBNAIL_NAME = 'shouldUseAnimatedWebPThumbnail'
+const patchedFunctions = new Set<(...args: any[]) => any>()
+
+const animatedThumbnailFilter = createFilterGenerator<[]>(
+	(_args, _id, exports) => {
+		try {
+			if (!isRecord(exports)) return false
+			const parents = [exports]
+			if (isRecord(exports.default)) parents.push(exports.default)
+			return parents.some(parent =>
+				Object.keys(parent).some(key => {
+					const value = parent[key]
+					return (
+						typeof value === 'function' &&
+						value.name === ANIMATED_THUMBNAIL_NAME
+					)
+				}),
+			)
+		} catch {
+			return false
+		}
+	},
+	() => 'freezeGifPicker.animatedThumbnail',
+	FilterScopes.Initialized,
+)
+
+function patchAnimatedThumbnail(cleanup: Cleanup): void {
+	try {
+		cleanup(
+			getModules(
+				animatedThumbnailFilter(),
+				(exports: unknown, id) => {
+					if (!isRecord(exports)) return
+					const parents = [exports]
+					if (isRecord(exports.default)) parents.push(exports.default)
+
+					for (const parent of parents) {
+						for (const key of Object.keys(parent)) {
+							try {
+								const original = parent[key]
+								if (typeof original !== 'function') continue
+								if (original.name !== ANIMATED_THUMBNAIL_NAME) continue
+								if (patchedFunctions.has(original)) continue
+								ensureWritable(parent, key)
+								patchedFunctions.add(original)
+								cleanup(insteadLoose(parent, key, () => false))
+								logOnce(
+									'animated:patched',
+									'patched animated thumbnail selector',
+									String(id),
+									key,
+								)
+							} catch {}
+						}
+					}
+				},
+				{ returnNamespace: true },
+			),
+		)
+	} catch {}
+}
+
 function patchImageComponent(
 	name: 'Image' | 'ImageBackground',
 	cleanup: Cleanup,
@@ -403,6 +491,7 @@ export default plugin({
 		}
 		patchImageComponent('Image', cleanup)
 		patchImageComponent('ImageBackground', cleanup)
+		patchAnimatedThumbnail(cleanup)
 		patchGifComponents(cleanup)
 		cleanup(
 			getModules(
