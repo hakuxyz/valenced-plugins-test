@@ -18,7 +18,7 @@ const seen = new Set<string>()
 const patched = new WeakSet<AnyFunction>()
 
 function report(key: string, detail: string): void {
-	const id = `${key}:${detail}`
+	const id = `${key}:${detail.slice(0, 80)}`
 	if (seen.has(id)) return
 	seen.add(id)
 	const text = `${key}: ${detail}`
@@ -75,22 +75,27 @@ function cleanValue(value: unknown, depth = 0): unknown {
 	return next ?? value
 }
 
-function short(value: unknown, depth = 0): string {
-	if (typeof value === 'string') return value.slice(0, 60)
-	if (typeof value === 'number' || typeof value === 'boolean')
-		return String(value)
-	if (typeof value === 'function') return `fn:${value.name || '?'}`
+function dump(value: unknown, depth = 0, limit = 4): string {
+	if (typeof value === 'string') return JSON.stringify(value.slice(0, 70))
+	if (typeof value === 'function') return 'fn'
 	if (value === null || value === undefined) return String(value)
-	if (depth > 1) return '...'
-	if (Array.isArray(value))
-		return `[${value.length}:${short(value[0], depth + 1)}]`
-	if (isPlain(value))
-		return `{${Object.keys(value)
-			.slice(0, 8)
-			.map(key => `${key}=${short(value[key], depth + 1)}`)
+	if (Array.isArray(value)) {
+		const items = value
+			.slice(0, limit)
+			.map(item => dump(item, depth + 1, limit))
+		if (value.length > limit) items.push(`+${value.length - limit}`)
+		return `[${items.join(',')}]`
+	}
+	if (isPlain(value)) {
+		if (depth > 3) return '{...}'
+		return `{${Object.entries(value)
+			.slice(0, 12)
+			.map(([key, item]) => `${key}:${dump(item, depth + 1, limit)}`)
 			.join(',')}}`
-	if (isRecord(value)) return Object.keys(value).slice(0, 5).join(',')
-	return typeof value
+	}
+	if (isRecord(value))
+		return `<obj:${Object.keys(value).slice(0, 5).join(',')}>`
+	return String(value)
 }
 
 function collect(
@@ -115,7 +120,8 @@ const emojiComponents = createFilterGenerator<[]>(
 		collect(exports, names)
 		return [...names.keys()].some(
 			name =>
-				/emoji/i.test(name) && /categor|section|header|item|picker/i.test(name),
+				/emoji/i.test(name) &&
+				/categor|section|header|item|picker|list/i.test(name),
 		)
 	},
 	() => 'noTopEmojis.emojiComponents',
@@ -129,12 +135,16 @@ function patchComponent(name: string, fn: AnyFunction, cleanup: Cleanup): void {
 		try {
 			const el = element as ReactElement<Record<string, unknown>>
 			const props = el.props ?? {}
+
+			if (name === 'EmojiPickerListComponent') {
+				report(name, `data=${dump(props.data, 0, 6)}`)
+			}
+			if (/EmojiPickerCategor/.test(name)) {
+				report(name, `category=${dump(props.category, 0, 6)}`)
+			}
+
 			const next = cleanValue(props) as Record<string, unknown>
 			const changed = Object.keys(next).some(key => next[key] !== props[key])
-			report(
-				`jsx:${name}`,
-				`keys=${Object.keys(props).slice(0, 10).join(',')} ${short(props)}`,
-			)
 			return changed ? (cloneElement(el, next) as never) : (element as never)
 		} catch {
 			return element as never
@@ -154,7 +164,7 @@ export default plugin({
 					for (const [name, fn] of names) {
 						if (
 							/emoji/i.test(name) &&
-							/categor|section|header|item|picker/i.test(name)
+							/categor|section|header|item|picker|list/i.test(name)
 						) {
 							patchComponent(name, fn, cleanup)
 						}
