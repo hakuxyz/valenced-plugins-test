@@ -248,46 +248,136 @@ function truncateName(name: string): string {
 	return name.length > USERNAME_MAX ? `${name.slice(0, USERNAME_MAX)}...` : name
 }
 
-function dumpModulesDiag(): void {
-	const names: string[] = []
-	const suf: string[] = []
-	const pressable: string[] = []
-	const chat: string[] = []
-	let scanned = 0
+function probe(
+	label: string,
+	filter: any,
+	cb: (exports: any) => void,
+	max = 20,
+): () => void {
 	try {
-		const unsub = getModules(
-			(() => true) as unknown as any,
-			(exports: any) => {
-				if (exports == null || typeof exports !== 'object') return
-				scanned++
-				const name = String(exports.name ?? exports.displayName ?? '')
-				names.push(name || 'noname')
-				const def = exports.default
-				if (
-					typeof exports.showUserProfile === 'function' ||
-					typeof def?.showUserProfile === 'function'
-				)
-					suf.push(name)
-				if (
-					typeof exports.Pressable === 'function' ||
-					typeof def?.Pressable === 'function'
-				)
-					pressable.push(name)
-				if (/chat/i.test(name)) chat.push(name)
+		return getModules(filter, cb, { max }) as any
+	} catch {
+		toast(`CM probe ${label} err`)
+		return () => {}
+	}
+}
+
+function dumpModulesDiag(cleanup: Cleanup): void {
+	const hits: string[] = []
+	const add = (s: string) => {
+		if (hits.length < 24 && !hits.includes(s)) hits.push(s)
+	}
+
+	const probes: Array<[string, any, (exports: any) => void]> = [
+		[
+			'showUserProfile',
+			withProps('showUserProfile'),
+			exports => {
+				const fn =
+					(exports as any)?.showUserProfile ??
+					(exports as any)?.default?.showUserProfile
+				if (typeof fn === 'function') add('showUserProfile')
 			},
-			{ max: 3000 },
-		)
-		setTimeout(() => {
-			try {
-				unsub()
-			} catch {}
-		}, 3000)
-	} catch {}
+		],
+		[
+			'openUserProfile',
+			withProps('openUserProfile'),
+			exports => {
+				const fn =
+					(exports as any)?.openUserProfile ??
+					(exports as any)?.default?.openUserProfile
+				if (typeof fn === 'function') add('openUserProfile')
+			},
+		],
+		[
+			'openUserProfileModal',
+			withProps('openUserProfileModal'),
+			exports => {
+				const fn =
+					(exports as any)?.openUserProfileModal ??
+					(exports as any)?.default?.openUserProfileModal
+				if (typeof fn === 'function') add('openUserProfileModal')
+			},
+		],
+		[
+			'showUserProfileModal',
+			withProps('showUserProfileModal'),
+			exports => {
+				const fn =
+					(exports as any)?.showUserProfileModal ??
+					(exports as any)?.default?.showUserProfileModal
+				if (typeof fn === 'function') add('showUserProfileModal')
+			},
+		],
+		[
+			'Pressable+View',
+			withProps('Pressable', 'View'),
+			exports => {
+				if ((exports as any)?.Pressable || (exports as any)?.default?.Pressable)
+					add('RN.PressableView')
+			},
+		],
+		[
+			'TouchableOpacity',
+			withProps('TouchableOpacity'),
+			exports => {
+				if (
+					(exports as any)?.TouchableOpacity ||
+					(exports as any)?.default?.TouchableOpacity
+				)
+					add('RN.TouchableOpacity')
+			},
+		],
+		[
+			'Chat',
+			withName('Chat'),
+			exports => {
+				const Chat =
+					(exports as any)?.default ?? (exports as any)?.Chat ?? exports
+				if (Chat?.prototype?.render) add('Chat.proto')
+				else if (typeof Chat === 'function') add('Chat.fn')
+			},
+		],
+		[
+			'ChatList',
+			withName('ChatList'),
+			exports => {
+				const C = (exports as any)?.default ?? exports
+				if (C?.prototype?.render || typeof C === 'function') add('ChatList')
+			},
+		],
+		[
+			'Messages',
+			withName('Messages'),
+			exports => {
+				const C = (exports as any)?.default ?? exports
+				if (C?.prototype?.render || typeof C === 'function') add('Messages')
+			},
+		],
+		[
+			'ChannelChat',
+			withName('ChannelChat'),
+			exports => {
+				const C = (exports as any)?.default ?? exports
+				if (C?.prototype?.render || typeof C === 'function') add('ChannelChat')
+			},
+		],
+		[
+			'RowManager',
+			withName('RowManager'),
+			exports => {
+				if (resolveRowManager(exports)) add('RowManager')
+			},
+		],
+	]
+
+	for (const [label, filter, cb] of probes) {
+		cleanup(probe(label, filter, cb))
+	}
+
 	setTimeout(() => {
-		toast(
-			`CM-DUMP n=${scanned} suf=[${suf.slice(0, 10).join('|')}] p=[${pressable.slice(0, 10).join('|')}] c=[${chat.slice(0, 10).join('|')}] samp=[${names.slice(0, 10).join('|')}]`,
-		)
-	}, 3500)
+		toast(`CM-PROBE: ${hits.length ? hits.join(', ') : 'none'}`)
+	}, 2500)
 }
 
 let treeDumpCount = 0
@@ -625,74 +715,132 @@ export default plugin<{ jsonStorage: Settings }>({
 			usernameTapMap.clear()
 		})
 
+		const reportFound = (what: string) => toast(`CM found: ${what}`)
+
 		cleanup(
-			getModules(
+			probe(
+				'showUserProfile',
 				withProps('showUserProfile'),
 				exports => {
 					const fn =
 						(exports as any)?.showUserProfile ??
 						(exports as any)?.default?.showUserProfile
-					if (typeof fn === 'function') showUserProfile = fn
+					if (typeof fn === 'function' && showUserProfile !== fn) {
+						showUserProfile = fn
+						reportFound('showUserProfile')
+					}
 				},
-				{ max: 5 },
+				10,
 			),
 		)
-
-		let chatFound = false
 		cleanup(
-			getModules(
-				withProps('Pressable'),
+			probe(
+				'openUserProfile',
+				withProps('openUserProfile'),
 				exports => {
-					if (RN?.Pressable) return
-					const candidate = (exports as any)?.default ?? (exports as any)
-					if (candidate?.Pressable) RN = candidate
+					const fn =
+						(exports as any)?.openUserProfile ??
+						(exports as any)?.default?.openUserProfile
+					if (typeof fn === 'function' && showUserProfile !== fn) {
+						showUserProfile = fn
+						reportFound('openUserProfile')
+					}
 				},
-				{ max: 5 },
+				10,
 			),
 		)
 
 		cleanup(
-			getModules(
-				withName('Chat'),
+			probe(
+				'Pressable',
+				withProps('Pressable', 'View'),
 				exports => {
-					const Chat =
-						(exports as any)?.default ?? (exports as any)?.Chat ?? exports
-					if (!Chat?.prototype) return
-					chatFound = true
-					ensureWritable(Chat.prototype, 'render')
-					cleanup(
-						afterLoose(Chat.prototype, 'render', (result: any) => {
-							try {
-								treeDumpCount = 0
-								dumpTree(result, 0, 7)
-								return wrapTaps(result, 0)
-							} catch {
-								return result
-							}
-						}),
-					)
+					const candidate = (exports as any)?.Pressable
+						? exports
+						: (exports as any)?.default?.Pressable
+							? (exports as any).default
+							: undefined
+					if (candidate?.Pressable && !RN?.Pressable) {
+						RN = candidate
+						reportFound('RN.Pressable')
+					}
 				},
-				{ max: 5 },
+				10,
+			),
+		)
+		cleanup(
+			probe(
+				'TouchableOpacity',
+				withProps('TouchableOpacity', 'View'),
+				exports => {
+					const candidate = (exports as any)?.TouchableOpacity
+						? exports
+						: (exports as any)?.default?.TouchableOpacity
+							? (exports as any).default
+							: undefined
+					if (
+						candidate?.TouchableOpacity &&
+						!RN?.Pressable &&
+						!RN?.TouchableOpacity
+					) {
+						RN = candidate
+						reportFound('RN.TouchableOpacity')
+					}
+				},
+				10,
 			),
 		)
 
-		console.log(
-			'[CompactMode] start: showUserProfile=',
-			!!showUserProfile,
-			'RN.Pressable=',
-			!!RN?.Pressable,
-			'ChatFound=',
-			chatFound,
-		)
+		let chatPatched = false
+		const tryPatchChat = (exports: any, label: string) => {
+			if (chatPatched) return
+			const Chat =
+				(exports as any)?.default ?? (exports as any)?.Chat ?? exports
+			if (!Chat?.prototype?.render && typeof Chat !== 'function') return
+			const target = Chat?.prototype ?? Chat
+			if (!target?.render && typeof Chat?.prototype?.render !== 'function') {
+				// function component - cannot patch prototype.render
+			}
+			if (!Chat?.prototype?.render) return
+			chatPatched = true
+			ensureWritable(Chat.prototype, 'render')
+			cleanup(
+				afterLoose(Chat.prototype, 'render', (result: any) => {
+					try {
+						treeDumpCount = 0
+						dumpTree(result, 0, 7)
+						return wrapTaps(result, 0)
+					} catch {
+						return result
+					}
+				}),
+			)
+			reportFound(`Chat:${label}`)
+		}
+
+		for (const name of [
+			'Chat',
+			'ChatList',
+			'ChannelChat',
+			'Messages',
+			'ChatView',
+		]) {
+			cleanup(
+				probe(name, withName(name), exports => tryPatchChat(exports, name), 10),
+			)
+		}
+
 		toast(
-			`CM start: showUserProfile=${!!showUserProfile} RN=${!!RN?.Pressable} Chat=${chatFound}`,
+			`CM start v1.2.4 init: showUserProfile=${!!showUserProfile} RN=${!!(RN?.Pressable ?? RN?.TouchableOpacity)} Chat=${chatPatched}`,
 		)
 
 		setTimeout(() => {
 			try {
-				dumpModulesDiag()
-			} catch {}
-		}, 500)
+				dumpModulesDiag(cleanup)
+			} catch {
+				toast('CM dump err')
+			}
+		}, 800)
 
 		cleanup(
 			getModules(withName('RowManager'), exports => install(exports, cleanup), {
