@@ -250,6 +250,10 @@ function installJsxHook(
 	if (patchedComponents.has(type)) return
 	patchedComponents.add(type)
 
+	// GIF modules can load lazily when the picker opens. Retry the selector
+	// patch from the first GIF component render, when those modules exist.
+	if (isGifName(tag) || tag.startsWith('GIF')) patchAnimatedThumbnail(cleanup)
+
 	try {
 		const unpatch = afterJSX(type, element => {
 			try {
@@ -518,6 +522,6 @@ export default plugin({
 				{ returnNamespace: true },
 			),
 		)
-		logOnce('started', 'freeze-gif-picker active (afterJSX diagnostics)')
+		logOnce('started', 'freeze-gif-picker active 1.1.8 (lazy thumbnail patch)')
 	},
 })
