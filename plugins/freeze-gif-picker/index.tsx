@@ -36,6 +36,8 @@ const GIF_PICKER_NAMES = new Set([
 	'GIFPickerNoResults',
 	'GIFPicker',
 	'GIFPickerHeader',
+	'GIFPickerFavorites',
+	'GIFPickerFavoriteItem',
 ])
 
 const DISABLE_PROPS: Record<string, boolean> = {
@@ -95,7 +97,9 @@ function isAnimatedMediaUri(uri: unknown): boolean {
 	if (!isHttpUrl(uri)) return false
 	if (/\.gif(?:[?#]|$)/i.test(uri)) return true
 	if (/\.gifv(?:[?#]|$)/i.test(uri)) return true
+	if (/\.apng(?:[?#]|$)/i.test(uri)) return true
 	if (/[?&](?:format|fm)=gif(?:&|$)/i.test(uri)) return true
+	if (/[?&](?:format|fm)=apng(?:&|$)/i.test(uri)) return true
 	if (/\/giphy\.gif(?:[?#]|$)/i.test(uri)) return true
 	if (/[?&]animated=true(?:&|$)/i.test(uri)) return true
 	return false
@@ -109,18 +113,36 @@ function isKnownGifProviderHost(hostname: string): boolean {
 		h.endsWith('klipy.com') ||
 		h === 'media.discordapp.net' ||
 		h === 'cdn.discordapp.com' ||
+		h === 'images-ext-1.discordapp.net' ||
+		h === 'images-ext-2.discordapp.net' ||
 		h.endsWith('.discordapp.net')
 	)
 }
 
-function setStaticQueryParams(url: URL, aggressive: boolean): boolean {
+function setStaticQueryParams(url: URL, force: boolean): boolean {
 	let changed = false
 	const animated = url.searchParams.get('animated')
 	if (animated && animated.toLowerCase() === 'true') {
 		url.searchParams.set('animated', 'false')
 		changed = true
+	} else if (force && isKnownGifProviderHost(url.hostname.toLowerCase())) {
+		// For known providers/proxies in aggressive contexts, prefer explicit static.
+		// Only set if param exists? no, some animate by default; but adding may be benign.
+		// We'll be conservative: set when we already decided to freeze and host is discord/klipy/tenor/giphy.
+		if (!url.searchParams.has('animated')) {
+			// avoid adding to arbitrary paths except discord proxy/klipy static which we know
+			const h = url.hostname.toLowerCase()
+			if (
+				h.endsWith('.discordapp.net') ||
+				h === 'cdn.discordapp.com' ||
+				h.endsWith('klipy.com')
+			) {
+				url.searchParams.set('animated', 'false')
+				changed = true
+			}
+		}
 	}
-	if (aggressive) {
+	if (force) {
 		const autoplay = url.searchParams.get('autoplay')
 		if (autoplay && autoplay !== '0' && autoplay.toLowerCase() !== 'false') {
 			url.searchParams.set('autoplay', 'false')
@@ -145,10 +167,9 @@ function toStaticMediaUri(
 		const path = url.pathname
 		let changed = false
 
-		// Strip animation-related query params where supported.
 		if (setStaticQueryParams(url, aggressive)) changed = true
 
-		// Discord media proxy / external proxy: prefer static formats.
+		// Discord media proxy / external proxy / attachments: prefer static formats.
 		if (
 			host === 'media.discordapp.net' ||
 			host === 'cdn.discordapp.com' ||
@@ -160,22 +181,26 @@ function toStaticMediaUri(
 				url.searchParams.set('format', 'png')
 				url.searchParams.delete('frame')
 				changed = true
-			} else if (fmt === 'gif') {
+			} else if (fmt === 'gif' || fmt === 'apng') {
 				url.searchParams.set('format', 'webp')
 				url.searchParams.delete('frame')
 				changed = true
-			} else if (aggressive) {
-				// External/proxied picker previews: force a static format if not already static.
+			} else if (
+				aggressive ||
+				/\/external\//i.test(path) ||
+				/\/attachments\//i.test(path)
+			) {
 				if (
-					/\/external\//i.test(path) ||
-					/images-ext/i.test(host) ||
-					/\/attachments\//i.test(path)
+					fmt !== 'png' &&
+					fmt !== 'webp' &&
+					fmt !== 'jpeg' &&
+					fmt !== 'jpg'
 				) {
+					// only force when it might be animated media proxy
 					if (
-						fmt !== 'png' &&
-						fmt !== 'webp' &&
-						fmt !== 'jpeg' &&
-						fmt !== 'jpg'
+						aggressive ||
+						isAnimatedMediaUri(uri) ||
+						/\/external\//i.test(path)
 					) {
 						url.searchParams.set('format', 'webp')
 						changed = true
@@ -194,7 +219,6 @@ function toStaticMediaUri(
 				url.pathname = path.replace(/\.gif$/i, '_s.gif')
 				return url.toString()
 			}
-			// mp4/webp previews: try stripping animated params if any were changed
 			return changed ? url.toString() : undefined
 		}
 
@@ -204,27 +228,24 @@ function toStaticMediaUri(
 				url.search = ''
 				return url.toString()
 			}
-			// Tenor often uses mp4/webm for previews; no guaranteed static sibling.
 			return changed ? url.toString() : undefined
 		}
 
 		if (host.endsWith('klipy.com')) {
-			// Klipy: animated previews may be webp/gif with animated=true; try forcing static.
 			if (/\.gif$/i.test(path)) {
 				url.pathname = path.replace(/\.gif$/i, '.webp')
 				changed = true
 			}
 			const fmt = (url.searchParams.get('format') || '').toLowerCase()
-			if (fmt === 'gif') {
+			if (fmt === 'gif' || fmt === 'apng') {
 				url.searchParams.set('format', 'webp')
 				changed = true
 			}
-			// Ensure animated=false is present in aggressive picker context for klipy static assets.
-			if (aggressive && url.searchParams.get('animated') !== 'false') {
-				// only add if we already touched or it looked animated-ish; but better to be explicit
-				// when called from aggressive freeze path.
-				url.searchParams.set('animated', 'false')
-				changed = true
+			if (aggressive || isAnimatedMediaUri(uri)) {
+				if (url.searchParams.get('animated') !== 'false') {
+					url.searchParams.set('animated', 'false')
+					changed = true
+				}
 			}
 			return changed ? url.toString() : undefined
 		}
@@ -233,8 +254,12 @@ function toStaticMediaUri(
 			url.pathname = path.replace(/\.gif$/i, '.png')
 			return url.toString()
 		}
+		if (/\.apng$/i.test(path)) {
+			url.pathname = path.replace(/\.apng$/i, '.png')
+			return url.toString()
+		}
 
-		if (/[?&](?:format|fm)=gif(?:&|$)/i.test(url.search)) {
+		if (/[?&](?:format|fm)=(?:gif|apng)(?:&|$)/i.test(url.search)) {
 			url.searchParams.set(
 				url.searchParams.has('format') ? 'format' : 'fm',
 				'webp',
@@ -242,11 +267,12 @@ function toStaticMediaUri(
 			changed = true
 		}
 
-		if (aggressive && changed) return url.toString()
 		return changed ? url.toString() : undefined
 	} catch {
 		if (/\.gif(?:[?#]|$)/i.test(uri))
 			return uri.replace(/\.gif(?=[?#]|$)/i, '.png')
+		if (/\.apng(?:[?#]|$)/i.test(uri))
+			return uri.replace(/\.apng(?=[?#]|$)/i, '.png')
 	}
 	return undefined
 }
@@ -296,9 +322,10 @@ function shouldFreezeUri(uri: string, aggressive: boolean): boolean {
 	if (isAnimatedMediaUri(uri)) return true
 	try {
 		const host = new URL(uri).hostname
-		if (isKnownGifProviderHost(host)) return aggressive
+		if (isKnownGifProviderHost(host))
+			return aggressive || /[?&]animated=/i.test(uri)
 	} catch {}
-	return aggressive
+	return false
 }
 
 function rewriteUriMaybe(
@@ -311,7 +338,8 @@ function rewriteUriMaybe(
 	if (staticHint && isHttpUrl(staticHint) && staticHint !== uri) {
 		try {
 			const host = new URL(uri).hostname
-			if (aggressive || isKnownGifProviderHost(host)) return staticHint
+			if (aggressive || isKnownGifProviderHost(host) || isAnimatedMediaUri(uri))
+				return staticHint
 		} catch {}
 	}
 
@@ -322,15 +350,55 @@ function rewriteUriMaybe(
 
 	try {
 		const u = new URL(uri)
-		if (aggressive && isKnownGifProviderHost(u.hostname)) {
+		if (
+			(aggressive || isKnownGifProviderHost(u.hostname)) &&
+			isAnimatedMediaUri(uri)
+		) {
 			debugLogOnce(
 				`uri:${u.hostname}${u.pathname}`,
-				'unconverted picker media uri',
+				'unconverted animated media uri',
 				uri,
 			)
 		}
 	} catch {}
 	return undefined
+}
+
+function freezeSourceValue(
+	source: any,
+	staticHint: string | undefined,
+	aggressive: boolean,
+): any {
+	if (typeof source === 'string') {
+		const rewritten = rewriteUriMaybe(source, staticHint, aggressive)
+		return rewritten && rewritten !== source ? rewritten : source
+	}
+	if (Array.isArray(source)) {
+		let changed = false
+		const out = source.map(item => {
+			const next = freezeSourceValue(item, staticHint, aggressive)
+			if (next !== item) changed = true
+			return next
+		})
+		return changed ? out : source
+	}
+	if (isRecord(source)) {
+		const uri = source.uri ?? source.url ?? source.src
+		const rewritten = rewriteUriMaybe(uri, staticHint, aggressive)
+		if (typeof rewritten === 'string' && rewritten && rewritten !== uri) {
+			const newSource = { ...source }
+			if (
+				'uri' in newSource ||
+				typeof source.uri === 'string' ||
+				!('url' in newSource)
+			)
+				newSource.uri = rewritten
+			if ('url' in newSource) newSource.url = rewritten
+			if ('src' in newSource) newSource.src = rewritten
+			return newSource
+		}
+	}
+	return source
 }
 
 function freezeProps(props: any, aggressive = false): any {
@@ -359,26 +427,8 @@ function freezeProps(props: any, aggressive = false): any {
 		pickStaticUri(props.asset) ??
 		pickStaticUri(props.category)
 
-	const applyToSourceObj = (src: Record<string, any>) => {
-		const uri = src.uri ?? src.url ?? src.src
-		const rewritten = rewriteUriMaybe(uri, staticHint, aggressive)
-		if (typeof rewritten === 'string' && rewritten && rewritten !== uri) {
-			const newSource = { ...src }
-			if (
-				'uri' in newSource ||
-				typeof src.uri === 'string' ||
-				!('url' in newSource)
-			)
-				newSource.uri = rewritten
-			if ('url' in newSource) newSource.url = rewritten
-			if ('src' in newSource) newSource.src = rewritten
-			return newSource
-		}
-		return src
-	}
-
-	if (isRecord(props.source)) {
-		const newSource = applyToSourceObj(props.source)
+	if ('source' in props) {
+		const newSource = freezeSourceValue(props.source, staticHint, aggressive)
 		if (newSource !== props.source) ensure().source = newSource
 	}
 
@@ -411,6 +461,9 @@ function freezeProps(props: any, aggressive = false): any {
 		if (isRecord(bag)) {
 			const frozenBag = freezeProps(bag, aggressive)
 			if (frozenBag !== bag) ensure()[bagKey] = frozenBag
+		} else if (Array.isArray(bag) || typeof bag === 'string') {
+			const frozenBag = freezeSourceValue(bag, staticHint, aggressive)
+			if (frozenBag !== bag) ensure()[bagKey] = frozenBag
 		}
 	}
 
@@ -431,8 +484,6 @@ function freezeProps(props: any, aggressive = false): any {
 
 	return next
 }
-
-const seen = new WeakSet<object>()
 
 function freezeTree(node: any, aggressive = false, depth = 0): any {
 	if (node == null || depth > 16) return node
@@ -462,20 +513,14 @@ function freezeTree(node: any, aggressive = false, depth = 0): any {
 		if (nextChildren !== props.children) childChanged = true
 	}
 
-	if (nextProps === props && !childChanged) {
-		if (!seen.has(el)) seen.add(el)
-		return el
-	}
+	if (nextProps === props && !childChanged) return el
 
 	const finalProps = nextProps === props ? { ...props } : { ...nextProps }
 	if (childChanged) finalProps.children = nextChildren
 
 	try {
-		const cloned = React.cloneElement(el, finalProps)
-		seen.add(cloned)
-		return cloned
+		return React.cloneElement(el, finalProps)
 	} catch {
-		seen.add(el)
 		return el
 	}
 }
@@ -500,9 +545,12 @@ function looksLikeGifPickerComponentName(name: string): boolean {
 		lower.includes('gif') &&
 		(lower.includes('pick') ||
 			lower.includes('picker') ||
-			lower.includes('category'))
+			lower.includes('category') ||
+			lower.includes('favorite') ||
+			lower.includes('result'))
 	)
 		return true
+	if (lower.includes('favorite') && lower.includes('gif')) return true
 	return false
 }
 
@@ -612,6 +660,30 @@ function patchGifStore(cleanup: Cleanup): void {
 	} catch {}
 }
 
+function extractSourceUri(props: any): string | undefined {
+	if (!isRecord(props)) return undefined
+	const src = props.source
+	if (typeof src === 'string' && src) return src
+	if (Array.isArray(src)) {
+		for (const item of src) {
+			if (typeof item === 'string' && item) return item
+			if (isRecord(item)) {
+				const u = item.uri ?? item.url ?? item.src
+				if (typeof u === 'string' && u) return u
+			}
+		}
+	}
+	if (isRecord(src)) {
+		const u = src.uri ?? src.url ?? src.src
+		if (typeof u === 'string' && u) return u
+	}
+	for (const k of ['uri', 'url', 'src', 'imageUrl', 'gifUrl', 'previewUrl']) {
+		const v = props[k]
+		if (typeof v === 'string' && v) return v
+	}
+	return undefined
+}
+
 function patchCreateElement(cleanup: Cleanup): void {
 	try {
 		const reactMod: any = React as any
@@ -627,40 +699,23 @@ function patchCreateElement(cleanup: Cleanup): void {
 			try {
 				const aggressive = gifPickerRenderDepth > 0
 				if (isRecord(props)) {
-					const sourceUri = isRecord(props.source)
-						? (props.source.uri ?? props.source.url ?? props.source.src)
-						: (props.uri ?? props.url ?? props.src ?? props.imageUrl)
+					const sourceUri = extractSourceUri(props)
+					if (isHttpUrl(sourceUri)) {
+						let isProviderUri = false
+						try {
+							isProviderUri = isKnownGifProviderHost(
+								new URL(sourceUri).hostname,
+							)
+						} catch {}
 
-					const hasMediaProp =
-						isRecord(props.source) ||
-						typeof props.uri === 'string' ||
-						typeof props.url === 'string' ||
-						typeof props.src === 'string' ||
-						typeof props.imageUrl === 'string'
+						const shouldInspect =
+							aggressive || isAnimatedMediaUri(sourceUri) || isProviderUri
 
-					const isProviderUri = isHttpUrl(sourceUri)
-						? (() => {
-								try {
-									return isKnownGifProviderHost(new URL(sourceUri).hostname)
-								} catch {
-									return false
-								}
-							})()
-						: false
-
-					const shouldInspect =
-						aggressive ||
-						isAnimatedMediaUri(sourceUri) ||
-						(isProviderUri &&
-							(hasMediaProp ||
-								'paused' in props ||
-								'shouldAnimate' in props ||
-								'shouldPlay' in props))
-
-					if (shouldInspect) {
-						const nextProps = freezeProps(props, aggressive || isProviderUri)
-						if (nextProps !== props) {
-							return orig.call(this, type, nextProps, ...children)
+						if (shouldInspect) {
+							const nextProps = freezeProps(props, aggressive || isProviderUri)
+							if (nextProps !== props) {
+								return orig.call(this, type, nextProps, ...children)
+							}
 						}
 					}
 				}
@@ -687,6 +742,8 @@ function wrapRenderFunctionsForDepth(cleanup: Cleanup): void {
 		'GIFPickerSearchSuggestions',
 		'GIFPickerNoResults',
 		'GIFPickerHeader',
+		'GIFPickerFavorites',
+		'GIFPickerFavoriteItem',
 	]
 
 	for (const name of names) {
