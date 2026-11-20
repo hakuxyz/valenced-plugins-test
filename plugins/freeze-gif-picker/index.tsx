@@ -1,6 +1,18 @@
 import { getModules } from '@valenced/modules/finders'
+import { withName } from '@valenced/modules/finders/filters'
+import { after } from '@valenced/patcher'
 import * as React from 'react'
 import type { AnyFunction } from '@valenced/utils/types'
+
+type Cleanup = (...fns: Array<() => unknown>) => void
+
+type LooseAfter = (
+	parent: Record<string, AnyFunction>,
+	key: string,
+	hook: (result: any, ...args: any[]) => any,
+) => () => void
+
+const afterLoose = after as unknown as LooseAfter
 
 const GIF_PICKER_NAMES = new Set([
 	'GIFPickerItemView',
@@ -18,7 +30,7 @@ const GIF_PICKER_NAMES = new Set([
 ])
 
 // Props, die RN-Image/Video-ähnliche Komponenten zum Animieren/Abspielen veranlassen können.
-const ANIMATION_PROPS: Record<string, any> = {
+const ANIMATION_PROPS: Record<string, boolean> = {
 	paused: true,
 	autoPlay: false,
 	autoplay: false,
@@ -31,10 +43,12 @@ const ANIMATION_PROPS: Record<string, any> = {
 	loop: false,
 }
 
-// native Media-Elemente, deren Animated-GIF/Video-Wiedergabe wir unterbinden wollen.
-const MEDIA_TYPES = new Set([
+// RN-Host-Component-Namen (minimierte Builds nutzen Strings als type).
+const MEDIA_HOST_NAMES = new Set([
 	'Image',
 	'Video',
+	'RCTImageView',
+	'ImageView',
 	'AnimatedImage',
 	'GifView',
 	'AnimatedGif',
@@ -74,19 +88,20 @@ function freezeElementProps(props: any): any {
 	return changed ? next : props
 }
 
-function isMediaElement(type: any): boolean {
+function isMediaType(type: any): boolean {
 	if (type == null) return false
-	const name =
-		(type?.name ?? type?.displayName ?? typeof type === 'string') ? type : ''
-	if (typeof name === 'string' && MEDIA_TYPES.has(name)) return true
+	if (typeof type === 'string') {
+		return MEDIA_HOST_NAMES.has(type)
+	}
+	const name = (type as any).name ?? (type as any).displayName ?? ''
+	if (typeof name === 'string' && MEDIA_HOST_NAMES.has(name)) return true
 	return false
 }
 
-function patchCreateElement(): () => void {
+function patchReactCreateElement(cleanup: Cleanup): void {
 	const reactMod: any = React as any
 	const orig = reactMod.createElement
-	if (typeof orig !== 'function') return
-	if (patchedFns.has(orig)) return
+	if (typeof orig !== 'function' || patchedFns.has(orig)) return
 	patchedFns.add(orig)
 
 	reactMod.createElement = function patchedCreateElement(
@@ -95,67 +110,112 @@ function patchCreateElement(): () => void {
 		...children: any[]
 	) {
 		try {
-			if (isMediaElement(type)) {
+			if (isMediaType(type)) {
 				const frozen = freezeElementProps(props)
-				if (frozen !== props) return orig.call(this, type, frozen, ...children)
+				if (frozen !== props) return orig.call(this, frozen, ...children)
 			}
 		} catch {}
 		return orig.call(this, type, props, ...children)
 	}
 
-	return () => {
-		reactMod.createElement = orig
-	}
+	cleanup(() => {
+		try {
+			reactMod.createElement = orig
+		} catch {}
+	})
 }
 
-export default plugin({
-	start({ cleanup }) {
-		cleanup(patchCreateElement())
-
-		// Auch GIF-Picker-Komponenten selbst (wenn gefunden) auf statisches Rendern zwingen.
-		try {
-			cleanup(
-				getModules(
-					(m: any) => {
-						if (!m || typeof m !== 'object') return false
-						const keys = Object.keys(m)
-						return keys.some(
-							k => GIF_PICKER_NAMES.has(k) || /GIFPicker|GifPicker/i.test(k),
+function patchReactNativeCreateElement(cleanup: Cleanup): void {
+	try {
+		cleanup(
+			getModules(
+				withName('createElement'),
+				(m: any) => {
+					try {
+						if (!m || typeof m !== 'object') return
+						const targets = [m, m.default].filter(
+							(t: any) => t && typeof t === 'object',
 						)
-					},
-					(m: any) => {
-						try {
-							for (const key of Object.keys(m)) {
-								if (
-									!GIF_PICKER_NAMES.has(key) &&
-									!/GIFPicker|GifPicker/i.test(key)
+						for (const t of targets) {
+							const orig = t.createElement
+							if (typeof orig !== 'function' || patchedFns.has(orig)) continue
+							patchedFns.add(orig)
+							t.createElement = function patchedCreateElement(
+								type: any,
+								props: any,
+								...children: any[]
+							) {
+								try {
+									if (isMediaType(type)) {
+										const frozen = freezeElementProps(props)
+										if (frozen !== props)
+											return orig.call(this, frozen, ...children)
+									}
+								} catch {}
+								return orig.call(this, type, props, ...children)
+							}
+							cleanup(() => {
+								try {
+									t.createElement = orig
+								} catch {}
+							})
+						}
+					} catch {}
+				},
+				{ returnNamespace: true },
+			),
+		)
+	} catch {}
+}
+
+function patchGifPickerComponents(cleanup: Cleanup): void {
+	try {
+		cleanup(
+			getModules(
+				withName('GIFPickerItemView'),
+				(m: any) => {
+					try {
+						if (!m || typeof m !== 'object') return
+						const targets = [m, m.default].filter(
+							(t: any) => t && typeof t === 'object',
+						)
+						for (const t of targets) {
+							for (const key of Object.keys(t)) {
+								const fn = (t as any)[key]
+								if (typeof fn !== 'function' || patchedFns.has(fn)) continue
+								const name = String(
+									(fn as any).displayName ?? (fn as any).name ?? key,
 								)
-									continue
-								const fn = (m as any)[key]
-								if (typeof fn !== 'function') continue
-								if (patchedFns.has(fn)) continue
+								if (!GIF_PICKER_NAMES.has(name) && key !== 'default') continue
+								if (key === 'default' && !GIF_PICKER_NAMES.has(name)) continue
 								patchedFns.add(fn)
 
-								;(m as any)[key] = function patchedComponent(
-									this: any,
+								;(t as any)[key] = function patchedComponent(
+									thisArg: any,
 									props: any,
 								) {
 									try {
 										const frozen = freezeElementProps(props)
-										// eslint-disable-next-line @typescript-eslint/no-unsafe-argument
-										return (fn as AnyFunction).call(this, frozen)
+										return (fn as AnyFunction).call(thisArg, frozen)
 									} catch {
-										return (fn as AnyFunction).call(this, props)
+										return (fn as AnyFunction).call(thisArg, props)
 									}
 								}
 							}
-						} catch {}
-					},
-					{ returnNamespace: true },
-				),
-			)
-		} catch {}
+						}
+					} catch {}
+				},
+				{ returnNamespace: true },
+			),
+		)
+	} catch {}
+}
 
+export default plugin({
+	start({ cleanup }) {
+		patchReactCreateElement(cleanup)
+		patchReactNativeCreateElement(cleanup)
+		patchGifPickerComponents(cleanup)
 		debugLogOnce('started', 'freeze-gif-picker active')
 	},
 })
