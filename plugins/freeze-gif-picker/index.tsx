@@ -1,5 +1,5 @@
 import { getModules } from '@valenced/modules/finders'
-import { withName, withProps } from '@valenced/modules/finders/filters'
+import { withName } from '@valenced/modules/finders/filters'
 import { after } from '@valenced/patcher'
 import * as React from 'react'
 import type { AnyFunction } from '@valenced/utils/types'
@@ -14,6 +14,17 @@ type LooseAfter = (
 
 const afterLoose = after as unknown as LooseAfter
 
+let gifPickerRenderDepth = 0
+const logged = new Set<string>()
+
+function debugLogOnce(key: string, ...args: any[]) {
+	if (logged.has(key)) return
+	logged.add(key)
+	try {
+		console.log('[freeze-gif-picker]', ...args)
+	} catch {}
+}
+
 const GIF_PICKER_NAMES = new Set([
 	'GIFPickerItemView',
 	'GIFPickerCategoryView',
@@ -24,6 +35,7 @@ const GIF_PICKER_NAMES = new Set([
 	'GIFPickerSearchSuggestions',
 	'GIFPickerNoResults',
 	'GIFPicker',
+	'GIFPickerHeader',
 ])
 
 const DISABLE_PROPS: Record<string, boolean> = {
@@ -75,57 +87,41 @@ function isRecord(value: unknown): value is Record<string, any> {
 	return typeof value === 'object' && value !== null
 }
 
+function isHttpUrl(uri: unknown): uri is string {
+	return typeof uri === 'string' && /^https?:\/\//i.test(uri)
+}
+
 function isAnimatedMediaUri(uri: unknown): boolean {
-	if (typeof uri !== 'string' || !uri) return false
+	if (!isHttpUrl(uri)) return false
 	if (/\.gif(?:[?#]|$)/i.test(uri)) return true
+	if (/\.gifv(?:[?#]|$)/i.test(uri)) return true
 	if (/[?&](?:format|fm)=gif(?:&|$)/i.test(uri)) return true
 	if (/\/giphy\.gif(?:[?#]|$)/i.test(uri)) return true
-	if (/\.gifv(?:[?#]|$)/i.test(uri)) return true
 	return false
 }
 
-function isPickerLikelyMediaUri(uri: unknown): boolean {
-	if (typeof uri !== 'string' || !uri) return false
+function isKnownGifProviderHost(hostname: string): boolean {
+	const h = hostname.toLowerCase()
 	return (
-		/tenor\.com/i.test(uri) ||
-		/giphy\.com/i.test(uri) ||
-		/klipy\.com/i.test(uri) ||
-		/media\.discordapp\.net/i.test(uri) ||
-		/cdn\.discordapp\.com/i.test(uri) ||
-		/images-ext-\d+\.discordapp\.net/i.test(uri)
+		h.endsWith('tenor.com') ||
+		h.includes('giphy.com') ||
+		h.endsWith('klipy.com') ||
+		h === 'media.discordapp.net' ||
+		h === 'cdn.discordapp.com' ||
+		h.endsWith('.discordapp.net')
 	)
 }
 
-function toStaticMediaUri(uri: string): string | undefined {
+function toStaticMediaUri(
+	uri: string,
+	aggressive: boolean,
+): string | undefined {
 	try {
 		const url = new URL(uri)
 		const host = url.hostname.toLowerCase()
 		const path = url.pathname
 
-		if (host.endsWith('tenor.com')) {
-			if (/\.gif$/i.test(path)) {
-				url.pathname = path.replace(/\.gif$/i, '.png')
-				url.search = ''
-				return url.toString()
-			}
-			if (/\.mp4$/i.test(path)) {
-				// Tenor MP4s don't have a guaranteed static sibling; keep mp4 but we'll pause.
-				return undefined
-			}
-		}
-
-		if (host.includes('giphy.com')) {
-			if (/\/giphy\.gif$/i.test(path)) {
-				url.pathname = path.replace(/\/giphy\.gif$/i, '/giphy_s.gif')
-				return url.toString()
-			}
-			if (/\.gif$/i.test(path) && !/_s\.gif$/i.test(path)) {
-				url.pathname = path.replace(/\.gif$/i, '_s.gif')
-				return url.toString()
-			}
-			if (/\.mp4$/i.test(path)) return undefined
-		}
-
+		// Discord media proxy / external proxy: prefer static formats.
 		if (
 			host === 'media.discordapp.net' ||
 			host === 'cdn.discordapp.com' ||
@@ -138,14 +134,76 @@ function toStaticMediaUri(uri: string): string | undefined {
 				return url.toString()
 			}
 			if (url.searchParams.get('format') === 'gif') {
-				url.searchParams.set('format', 'png')
+				url.searchParams.set('format', 'webp')
 				url.searchParams.delete('frame')
 				return url.toString()
 			}
+			if (aggressive) {
+				// For proxied external previews (common in GIF picker), force a non-animated format.
+				if (/\/external\//i.test(path) || /images-ext/i.test(host)) {
+					const fmt = (url.searchParams.get('format') || '').toLowerCase()
+					if (
+						fmt !== 'png' &&
+						fmt !== 'webp' &&
+						fmt !== 'jpeg' &&
+						fmt !== 'jpg'
+					) {
+						url.searchParams.set('format', 'webp')
+						return url.toString()
+					}
+				}
+			}
+		}
+
+		if (host.includes('giphy.com')) {
+			if (/\/giphy\.gif$/i.test(path)) {
+				url.pathname = path.replace(/\/giphy\.gif$/i, '/giphy_s.gif')
+				return url.toString()
+			}
+			if (/\.gif$/i.test(path) && !/_s\.gif$/i.test(path)) {
+				url.pathname = path.replace(/\.gif$/i, '_s.gif')
+				return url.toString()
+			}
+			// mp4 previews: can't make static reliably
+			return undefined
+		}
+
+		if (host.endsWith('tenor.com')) {
+			if (/\.gif$/i.test(path)) {
+				url.pathname = path.replace(/\.gif$/i, '.png')
+				url.search = ''
+				return url.toString()
+			}
+			// Tenor often uses mp4/webm for previews; no guaranteed static sibling.
+			return undefined
+		}
+
+		if (host.endsWith('klipy.com')) {
+			// Klipy formats vary; try common still-ish conversions best-effort.
+			if (/\.gif$/i.test(path)) {
+				url.pathname = path.replace(/\.gif$/i, '.webp')
+				return url.toString()
+			}
+			if (aggressive) {
+				const fmt = url.searchParams.get('format')
+				if (fmt === 'gif') {
+					url.searchParams.set('format', 'webp')
+					return url.toString()
+				}
+			}
+			return undefined
 		}
 
 		if (/\.gif$/i.test(path)) {
 			url.pathname = path.replace(/\.gif$/i, '.png')
+			return url.toString()
+		}
+
+		if (aggressive && /[?&](?:format|fm)=gif(?:&|$)/i.test(url.search)) {
+			url.searchParams.set(
+				url.searchParams.has('format') ? 'format' : 'fm',
+				'webp',
+			)
 			return url.toString()
 		}
 	} catch {
@@ -156,7 +214,7 @@ function toStaticMediaUri(uri: string): string | undefined {
 }
 
 function pickStaticUri(value: unknown, depth = 0): string | undefined {
-	if (!isRecord(value) || depth > 4) return undefined
+	if (!isRecord(value) || depth > 5) return undefined
 
 	for (const key of STATIC_KEYS) {
 		const v = (value as any)[key]
@@ -179,9 +237,15 @@ function pickStaticUri(value: unknown, depth = 0): string | undefined {
 		'thumbnail',
 		'still',
 		'gif',
+		'src',
 	]) {
 		const v = (value as any)[key]
-		if (isRecord(v)) {
+		if (Array.isArray(v)) {
+			for (const item of v) {
+				const nested = pickStaticUri(item, depth + 1)
+				if (nested) return nested
+			}
+		} else if (isRecord(v)) {
 			const nested = pickStaticUri(v, depth + 1)
 			if (nested) return nested
 		}
@@ -190,18 +254,51 @@ function pickStaticUri(value: unknown, depth = 0): string | undefined {
 	return undefined
 }
 
+function shouldFreezeUri(uri: string, aggressive: boolean): boolean {
+	if (isAnimatedMediaUri(uri)) return true
+	try {
+		const host = new URL(uri).hostname
+		if (isKnownGifProviderHost(host)) return aggressive
+	} catch {}
+	return aggressive
+}
+
 function rewriteUriMaybe(
 	uri: unknown,
 	staticHint?: string,
+	aggressive = false,
 ): string | undefined {
-	if (typeof uri !== 'string' || !uri) return undefined
-	if (staticHint && staticHint !== uri && isPickerLikelyMediaUri(uri))
-		return staticHint
-	if (isAnimatedMediaUri(uri)) return toStaticMediaUri(uri) ?? staticHint
+	if (!isHttpUrl(uri)) return undefined
+
+	if (staticHint && isHttpUrl(staticHint) && staticHint !== uri) {
+		try {
+			const host = new URL(uri).hostname
+			if (aggressive || isKnownGifProviderHost(host)) return staticHint
+		} catch {}
+	}
+
+	if (!shouldFreezeUri(uri, aggressive)) return undefined
+
+	const converted = toStaticMediaUri(uri, aggressive)
+	if (converted && converted !== uri) return converted
+
+	// If we're in aggressive (gif picker) context and it's a known provider/proxy but we
+	// couldn't derive a still URL (e.g. mp4 preview), keep as-is; render patching may still
+	// help if a static hint exists elsewhere. Log for diagnosis.
+	try {
+		const u = new URL(uri)
+		if (aggressive && isKnownGifProviderHost(u.hostname)) {
+			debugLogOnce(
+				`uri:${u.hostname}${u.pathname}`,
+				'unconverted picker media uri',
+				uri,
+			)
+		}
+	} catch {}
 	return undefined
 }
 
-function freezeProps(props: any): any {
+function freezeProps(props: any, aggressive = false): any {
 	if (!isRecord(props)) return props
 
 	let next: any = props
@@ -217,8 +314,6 @@ function freezeProps(props: any): any {
 	if ('isFocused' in props && props.isFocused === true)
 		ensure().isFocused = false
 	if ('focused' in props && props.focused === true) ensure().focused = false
-	if ('shouldPlay' in props) ensure().shouldPlay = false
-	if ('isPlaying' in props) ensure().isPlaying = false
 
 	const staticHint =
 		pickStaticUri(props) ??
@@ -226,17 +321,18 @@ function freezeProps(props: any): any {
 		pickStaticUri(props.gif) ??
 		pickStaticUri(props.data) ??
 		pickStaticUri(props.result) ??
-		pickStaticUri(props.asset)
+		pickStaticUri(props.asset) ??
+		pickStaticUri(props.category)
 
 	const applyToSourceObj = (src: Record<string, any>) => {
 		const uri = src.uri ?? src.url ?? src.src
-		const rewritten = rewriteUriMaybe(uri, staticHint)
+		const rewritten = rewriteUriMaybe(uri, staticHint, aggressive)
 		if (typeof rewritten === 'string' && rewritten && rewritten !== uri) {
 			const newSource = { ...src }
 			if (
 				'uri' in newSource ||
 				typeof src.uri === 'string' ||
-				!('url' in newSource && !('uri' in newSource))
+				!('url' in newSource)
 			)
 				newSource.uri = rewritten
 			if ('url' in newSource) newSource.url = rewritten
@@ -259,10 +355,11 @@ function freezeProps(props: any): any {
 		'gifUrl',
 		'previewUrl',
 		'posterUrl',
+		'thumbnailUrl',
 	]) {
 		const v = props[key]
 		if (typeof v === 'string') {
-			const rewritten = rewriteUriMaybe(v, staticHint)
+			const rewritten = rewriteUriMaybe(v, staticHint, aggressive)
 			if (rewritten && rewritten !== v) ensure()[key] = rewritten
 		}
 	}
@@ -277,15 +374,22 @@ function freezeProps(props: any): any {
 	]) {
 		const bag = props[bagKey]
 		if (isRecord(bag)) {
-			const frozenBag = freezeProps(bag)
+			const frozenBag = freezeProps(bag, aggressive)
 			if (frozenBag !== bag) ensure()[bagKey] = frozenBag
 		}
 	}
 
-	for (const itemKey of ['item', 'gif', 'data', 'result', 'asset']) {
+	for (const itemKey of [
+		'item',
+		'gif',
+		'data',
+		'result',
+		'asset',
+		'category',
+	]) {
 		const item = props[itemKey]
 		if (isRecord(item)) {
-			const nextItem = freezeProps(item)
+			const nextItem = freezeProps(item, aggressive)
 			if (nextItem !== item) ensure()[itemKey] = nextItem
 		}
 	}
@@ -295,13 +399,13 @@ function freezeProps(props: any): any {
 
 const seen = new WeakSet<object>()
 
-function freezeTree(node: any, depth = 0): any {
-	if (node == null || depth > 14) return node
+function freezeTree(node: any, aggressive = false, depth = 0): any {
+	if (node == null || depth > 16) return node
 
 	if (Array.isArray(node)) {
 		let changed = false
 		const out = node.map(child => {
-			const next = freezeTree(child, depth + 1)
+			const next = freezeTree(child, aggressive, depth + 1)
 			if (next !== child) changed = true
 			return next
 		})
@@ -311,22 +415,20 @@ function freezeTree(node: any, depth = 0): any {
 	if (!React.isValidElement(node)) return node
 
 	const el = node as any
-	if (seen.has(el)) return el
-
 	const props = el.props
 	if (!isRecord(props)) return el
 
-	const nextProps = freezeProps(props)
+	const nextProps = freezeProps(props, aggressive)
 	let childChanged = false
 	let nextChildren = props.children
 
 	if (props.children != null) {
-		nextChildren = freezeTree(props.children, depth + 1)
+		nextChildren = freezeTree(props.children, aggressive, depth + 1)
 		if (nextChildren !== props.children) childChanged = true
 	}
 
 	if (nextProps === props && !childChanged) {
-		seen.add(el)
+		if (!seen.has(el)) seen.add(el)
 		return el
 	}
 
@@ -345,7 +447,7 @@ function freezeTree(node: any, depth = 0): any {
 
 function wrapRenderResult(result: any): any {
 	try {
-		return freezeTree(result)
+		return freezeTree(result, gifPickerRenderDepth > 0)
 	} catch {
 		return result
 	}
@@ -358,8 +460,13 @@ function looksLikeGifPickerComponentName(name: string): boolean {
 	if (GIF_PICKER_NAMES.has(name)) return true
 	if (name.includes('GIFPicker') || name.includes('GifPicker')) return true
 	if (/^GIFPicker/.test(name)) return true
-	// Some builds may use ExpressionPicker-related gif views
-	if (name.toLowerCase().includes('gif') && name.toLowerCase().includes('pick'))
+	const lower = name.toLowerCase()
+	if (
+		lower.includes('gif') &&
+		(lower.includes('pick') ||
+			lower.includes('picker') ||
+			lower.includes('category'))
+	)
 		return true
 	return false
 }
@@ -380,8 +487,22 @@ function patchFunctionComponent(
 		if (key === 'default' && !looksLikeGifPickerComponentName(name)) return
 
 		patchedFns.add(fn)
-		const unpatch = afterLoose(parent, key, result => wrapRenderResult(result))
+		const unpatch = afterLoose(
+			parent,
+			key,
+			function (this: any, result: any, ...args: any[]) {
+				void args
+				void this
+				return wrapRenderResult(result)
+			},
+		)
 		cleanup(unpatch)
+
+		// Also wrap the render invocation context by replacing function to track depth.
+		// Simpler: patch as instead-like behavior not available; instead we wrap createElement
+		// to always freeze when inside our wrapped render by temporarily flagging via a stack.
+		// We can approximate by setting depth around common render methods too, but function
+		// components are called by React internals. So rely on createElement+tree freeze.
 	} catch {}
 }
 
@@ -444,7 +565,7 @@ function patchGifStore(cleanup: Cleanup): void {
 								const fn = (t as any)[key]
 								if (typeof fn !== 'function') continue
 								if (
-									/shouldAnimate|getShouldAnimate|isAutoplay|autoplay/i.test(
+									/shouldAnimate|getShouldAnimate|isAutoplay|autoplay|getAnimate/i.test(
 										key,
 									)
 								) {
@@ -452,30 +573,6 @@ function patchGifStore(cleanup: Cleanup): void {
 									patchedFns.add(fn)
 									cleanup(afterLoose(t as any, key, () => false))
 								}
-							}
-						}
-					} catch {}
-				},
-				{ returnNamespace: true },
-			),
-		)
-	} catch {}
-
-	try {
-		cleanup(
-			getModules(
-				withProps('getTrendingSearchTerms', 'search'),
-				(m: any) => {
-					// best-effort: some gif picker stores/utils expose search-related methods; patch any autoplay flags if present
-					try {
-						if (!isRecord(m)) return
-						for (const key of Object.keys(m)) {
-							const fn = (m as any)[key]
-							if (typeof fn !== 'function') continue
-							if (/shouldAnimate|getShouldAnimate/i.test(key)) {
-								if (patchedFns.has(fn)) continue
-								patchedFns.add(fn)
-								cleanup(afterLoose(m, key, () => false))
 							}
 						}
 					} catch {}
@@ -499,24 +596,42 @@ function patchCreateElement(cleanup: Cleanup): void {
 			...children: any[]
 		) {
 			try {
-				// Only intervene when props suggest animated/media/gif picker content.
+				const aggressive = gifPickerRenderDepth > 0
 				if (isRecord(props)) {
+					// Detect if we're creating a GIF picker component to track render depth on next renders
+					// (best-effort via tree wrapping), and aggressively freeze media-like props.
 					const sourceUri = isRecord(props.source)
 						? (props.source.uri ?? props.source.url ?? props.source.src)
-						: (props.uri ?? props.url ?? props.src)
+						: (props.uri ?? props.url ?? props.src ?? props.imageUrl)
 
-					const hasGifHint =
+					const hasMediaProp =
+						isRecord(props.source) ||
+						typeof props.uri === 'string' ||
+						typeof props.url === 'string' ||
+						typeof props.src === 'string' ||
+						typeof props.imageUrl === 'string'
+
+					const isProviderUri = isHttpUrl(sourceUri)
+						? (() => {
+								try {
+									return isKnownGifProviderHost(new URL(sourceUri).hostname)
+								} catch {
+									return false
+								}
+							})()
+						: false
+
+					const shouldInspect =
+						aggressive ||
 						isAnimatedMediaUri(sourceUri) ||
-						(isPickerLikelyMediaUri(sourceUri) &&
-							('paused' in props ||
-								'autoPlay' in props ||
-								'autoplay' in props ||
-								'shouldPlay' in props ||
-								'isPlaying' in props ||
-								'shouldAnimate' in props))
+						(isProviderUri &&
+							(hasMediaProp ||
+								'paused' in props ||
+								'shouldAnimate' in props ||
+								'shouldPlay' in props))
 
-					if (hasGifHint) {
-						const nextProps = freezeProps(props)
+					if (shouldInspect) {
+						const nextProps = freezeProps(props, aggressive || isProviderUri)
 						if (nextProps !== props) {
 							return orig.call(this, type, nextProps, ...children)
 						}
@@ -534,27 +649,77 @@ function patchCreateElement(cleanup: Cleanup): void {
 	} catch {}
 }
 
+// Track render depth by wrapping known GIF picker component functions as "instead"-style via manual wrap
+function wrapRenderFunctionsForDepth(cleanup: Cleanup): void {
+	const names = [
+		'GIFPicker',
+		'GIFPickerItemView',
+		'GIFPickerResultItem',
+		'GIFPickerResultsList',
+		'GIFPickerCategoryView',
+		'GIFPickerCategoriesPage',
+		'GIFPickerSearchSuggestions',
+		'GIFPickerNoResults',
+		'GIFPickerHeader',
+	]
+
+	for (const name of names) {
+		try {
+			cleanup(
+				getModules(
+					withName(name),
+					(m: any) => {
+						try {
+							if (!isRecord(m)) return
+							const wrap = (obj: any, key: string) => {
+								const fn = obj?.[key]
+								if (typeof fn !== 'function' || patchedFns.has(fn)) return
+								const fname = String(fn.displayName ?? fn.name ?? key ?? '')
+								if (
+									!looksLikeGifPickerComponentName(fname) &&
+									key !== 'default'
+								)
+									return
+								if (
+									key === 'default' &&
+									!looksLikeGifPickerComponentName(fname)
+								)
+									return
+								patchedFns.add(fn)
+								;(obj as any)[key] = function (this: any, ...args: any[]) {
+									gifPickerRenderDepth++
+									try {
+										const res = fn.apply(this, args)
+										return wrapRenderResult(res)
+									} finally {
+										gifPickerRenderDepth--
+									}
+								}
+								// preserve common statics
+								try {
+									;(obj as any)[key].displayName =
+										(fn as any).displayName ?? (fn as any).name
+								} catch {}
+								cleanup(() => {
+									try {
+										;(obj as any)[key] = fn
+									} catch {}
+								})
+							}
+							for (const k of Object.keys(m)) wrap(m, k)
+							if (m.default) wrap(m, 'default')
+						} catch {}
+					},
+					{ returnNamespace: true },
+				),
+			)
+		} catch {}
+	}
+}
+
 export default plugin({
 	start({ cleanup }) {
-		for (const name of [
-			'GIFPicker',
-			'GIFPickerItemView',
-			'GIFPickerResultItem',
-			'GIFPickerResultsList',
-			'GIFPickerCategoryView',
-			'GIFPickerCategoriesPage',
-			'GIFPickerSearchSuggestions',
-			'GIFPickerNoResults',
-			'GIFPickerHeader',
-		]) {
-			try {
-				cleanup(
-					getModules(withName(name), (m: any) => scanNamespace(m, cleanup), {
-						returnNamespace: true,
-					}),
-				)
-			} catch {}
-		}
+		wrapRenderFunctionsForDepth(cleanup)
 
 		try {
 			cleanup(
@@ -590,5 +755,6 @@ export default plugin({
 
 		patchGifStore(cleanup)
 		patchCreateElement(cleanup)
+		debugLogOnce('init', 'freeze-gif-picker started')
 	},
 })
