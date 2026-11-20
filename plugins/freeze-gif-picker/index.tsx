@@ -538,14 +538,48 @@ export default plugin({
 								)
 							}
 						}
+						if (isRecord(target)) {
+							for (const key of [
+								'getSetting',
+								'useSetting',
+								'updateSetting',
+							] as const) {
+								const fn = target[key]
+								if (typeof fn === 'function') {
+									logOnce(
+										`gifautoplay:fn:${key}`,
+										'GifAutoPlay function',
+										key,
+										String(fn).slice(0, 600),
+									)
+								}
+							}
+							if (typeof target.updateSetting === 'function') {
+								try {
+									const previous = target.getSetting?.()
+									target.updateSetting(false)
+									logOnce(
+										'gifautoplay:disabled',
+										'GifAutoPlay disabled',
+										'was',
+										safeStringify(previous, 200),
+										'now',
+										safeStringify(target.getSetting?.(), 200),
+									)
+								} catch (error) {
+									logOnce(
+										'gifautoplay:disable-error',
+										'GifAutoPlay disable failed',
+										String(error),
+									)
+								}
+							}
+						}
 					}
 				},
 				{ returnNamespace: true },
 			),
 		)
-		logOnce(
-			'started',
-			'freeze-gif-picker active 1.1.9 (autoplay fn diagnostics)',
-		)
+		logOnce('started', 'freeze-gif-picker active 1.2.0 (autoplay off test)')
 	},
 })
