@@ -151,12 +151,44 @@ function freezeUri(value: unknown): unknown {
 	return value
 }
 
+const seenItemShapes = new Set<string>()
+
+function freezeItem(value: unknown): unknown {
+	if (!isRecord(value)) return value
+	const item = value as Record<string, any>
+	const animated = item.gifSrc
+	const still = item.src
+	if (
+		typeof animated === 'string' &&
+		typeof still === 'string' &&
+		animated !== still
+	) {
+		logOnce('item:freeze', 'freezing animated GIF item', {
+			gifSrc: animated,
+			src: still,
+		})
+		return { ...item, gifSrc: still }
+	}
+	return value
+}
+
 function freezeElement(
 	element: ReactElement<Record<string, any>>,
 	tag: string,
 ): ReactElement<Record<string, any>> {
 	const props = element.props ?? {}
 	const nextProps: Record<string, any> = { ...props }
+
+	if ('item' in nextProps) {
+		const frozen = freezeItem(nextProps.item)
+		if (frozen !== nextProps.item) nextProps.item = frozen
+	}
+	if (
+		typeof nextProps.gifSrc === 'string' &&
+		typeof nextProps.src === 'string'
+	) {
+		nextProps.gifSrc = nextProps.src
+	}
 
 	for (const [key, value] of Object.entries(ANIMATION_PROPS)) {
 		if (key in nextProps && nextProps[key] !== value) nextProps[key] = value
@@ -202,12 +234,17 @@ function installJsxHook(
 					Object.keys(props).sort(),
 					sourceInfo(props),
 				)
-				if (tag === 'GIFPickerItemView') {
+				if (tag === 'GIFPickerItemView' && isRecord(props.item)) {
 					logOnce(
 						'item:diag',
 						'GIFPickerItemView item',
 						safeStringify(props.item),
 					)
+					const shape = Object.keys(props.item).sort().join(',')
+					if (!seenItemShapes.has(shape) && seenItemShapes.size < 8) {
+						seenItemShapes.add(shape)
+						logOnce(`item:shape:${shape}`, 'GIF item shape', shape)
+					}
 				}
 				return freezeElement(element as ReactElement<Record<string, any>>, tag)
 			} catch {
@@ -377,6 +414,17 @@ export default plugin({
 							)
 						: []
 					logOnce(`autoplay:${id}`, 'autoplay module', String(id), keys)
+					if (keys.includes('GifAutoPlay') && isRecord(exports)) {
+						const target = (exports as Record<string, any>).GifAutoPlay
+						logOnce(
+							'gifautoplay:dump',
+							'GifAutoPlay export',
+							typeof target,
+							isRecord(target)
+								? Object.keys(target)
+								: safeStringify(target, 400),
+						)
+					}
 				},
 				{ returnNamespace: true },
 			),
