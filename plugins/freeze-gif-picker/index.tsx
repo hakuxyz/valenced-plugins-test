@@ -14,21 +14,6 @@ type LooseAfter = (
 
 const afterLoose = after as unknown as LooseAfter
 
-const GIF_PICKER_NAMES = new Set([
-	'GIFPickerItemView',
-	'GIFPickerCategoryView',
-	'GIFPickerResultsList',
-	'GIFPickerCategoriesPage',
-	'GIFPickerResultItem',
-	'GIFPickerItem',
-	'GIFPickerSearchSuggestions',
-	'GIFPickerNoResults',
-	'GIFPicker',
-	'GIFPickerHeader',
-	'GIFPickerFavorites',
-	'GIFPickerFavoriteItem',
-])
-
 // Props, die RN-Image/Video-ähnliche Komponenten zum Animieren/Abspielen veranlassen können.
 const ANIMATION_PROPS: Record<string, boolean> = {
 	paused: true,
@@ -175,54 +160,10 @@ function patchSetNativeProps(cleanup: Cleanup): void {
 	} catch {}
 }
 
-function patchGifPickerComponents(cleanup: Cleanup): void {
-	try {
-		cleanup(
-			getModules(
-				withName('GIFPickerItemView'),
-				(m: any) => {
-					try {
-						if (!m || typeof m !== 'object') return
-						const targets = [m, m.default].filter(
-							(t: any) => t && typeof t === 'object',
-						)
-						for (const t of targets) {
-							for (const key of Object.keys(t)) {
-								const fn = (t as any)[key]
-								if (typeof fn !== 'function' || patchedFns.has(fn)) continue
-								const name = String(
-									(fn as any).displayName ?? (fn as any).name ?? key,
-								)
-								if (!GIF_PICKER_NAMES.has(name) && key !== 'default') continue
-								if (key === 'default' && !GIF_PICKER_NAMES.has(name)) continue
-								patchedFns.add(fn)
-
-								;(t as any)[key] = function patchedComponent(
-									thisArg: any,
-									props: any,
-								) {
-									try {
-										const frozen = freezeElementProps(props)
-										return (fn as AnyFunction).call(thisArg, frozen)
-									} catch {
-										return (fn as AnyFunction).call(thisArg, props)
-									}
-								}
-							}
-						}
-					} catch {}
-				},
-				{ returnNamespace: true },
-			),
-		)
-	} catch {}
-}
-
 export default plugin({
 	start({ cleanup }) {
 		patchReactCreateElement(cleanup)
 		patchSetNativeProps(cleanup)
-		patchGifPickerComponents(cleanup)
 		debugLogOnce('started', 'freeze-gif-picker active')
 	},
 })
