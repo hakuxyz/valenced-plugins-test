@@ -7,6 +7,7 @@ export const PLATFORM_KEYS = [
 	'reddit',
 	'threads',
 	'pixiv',
+	'deviantart',
 ] as const
 
 export type PlatformKey = (typeof PLATFORM_KEYS)[number]
@@ -78,6 +79,12 @@ export const PLATFORM_MAP: Record<PlatformKey, PlatformInfo> = {
 		source: 'pixiv.net links',
 		defaultDomain: 'phixiv.net',
 	},
+	deviantart: {
+		key: 'deviantart',
+		label: 'DeviantArt',
+		source: 'deviantart.com links',
+		defaultDomain: 'fixdeviantart.com',
+	},
 }
 
 export const PLATFORMS: PlatformInfo[] = PLATFORM_KEYS.map(
@@ -100,6 +107,7 @@ export const DefaultSettings: Settings = {
 		reddit: setting(true, 'redditez.com'),
 		threads: setting(false, 'fixthreads.net'),
 		pixiv: setting(false, 'phixiv.net'),
+		deviantart: setting(true, 'fixdeviantart.com'),
 	},
 }
 
@@ -187,6 +195,8 @@ export function matchesPlatform(host: string, key: PlatformKey): boolean {
 			return isHost(host, 'threads.net') || isHost(host, 'threads.com')
 		case 'pixiv':
 			return isHost(host, 'pixiv.net')
+		case 'deviantart':
+			return isHost(host, 'deviantart.com')
 	}
 }
 
