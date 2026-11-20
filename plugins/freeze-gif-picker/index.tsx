@@ -1,5 +1,5 @@
 import { getModules } from '@valenced/modules/finders'
-import { withName } from '@valenced/modules/finders/filters'
+import { withName, withProps } from '@valenced/modules/finders/filters'
 import { after } from '@valenced/patcher'
 import * as React from 'react'
 import type { AnyFunction } from '@valenced/utils/types'
@@ -21,6 +21,9 @@ const GIF_PICKER_NAMES = new Set([
 	'GIFPickerCategoriesPage',
 	'GIFPickerResultItem',
 	'GIFPickerItem',
+	'GIFPickerSearchSuggestions',
+	'GIFPickerNoResults',
+	'GIFPicker',
 ])
 
 const DISABLE_PROPS: Record<string, boolean> = {
@@ -33,6 +36,7 @@ const DISABLE_PROPS: Record<string, boolean> = {
 	playing: false,
 	animate: false,
 	animated: false,
+	loop: false,
 }
 
 const STATIC_KEYS = [
@@ -62,35 +66,54 @@ const STATIC_KEYS = [
 	'fixed_height_still',
 	'fixed_width_still',
 	'original_still',
+	'nano_gif',
+	'nanogif',
+	'tinygif',
 ] as const
 
 function isRecord(value: unknown): value is Record<string, any> {
 	return typeof value === 'object' && value !== null
 }
 
-function isProbablyGifUri(uri: unknown): boolean {
+function isAnimatedMediaUri(uri: unknown): boolean {
 	if (typeof uri !== 'string' || !uri) return false
 	if (/\.gif(?:[?#]|$)/i.test(uri)) return true
-	if (/[?&]format=gif(?:&|$)/i.test(uri)) return true
+	if (/[?&](?:format|fm)=gif(?:&|$)/i.test(uri)) return true
 	if (/\/giphy\.gif(?:[?#]|$)/i.test(uri)) return true
+	if (/\.gifv(?:[?#]|$)/i.test(uri)) return true
 	return false
 }
 
-function toStaticGifUri(uri: string): string | undefined {
+function isPickerLikelyMediaUri(uri: unknown): boolean {
+	if (typeof uri !== 'string' || !uri) return false
+	return (
+		/tenor\.com/i.test(uri) ||
+		/giphy\.com/i.test(uri) ||
+		/klipy\.com/i.test(uri) ||
+		/media\.discordapp\.net/i.test(uri) ||
+		/cdn\.discordapp\.com/i.test(uri) ||
+		/images-ext-\d+\.discordapp\.net/i.test(uri)
+	)
+}
+
+function toStaticMediaUri(uri: string): string | undefined {
 	try {
 		const url = new URL(uri)
 		const host = url.hostname.toLowerCase()
 		const path = url.pathname
 
-		// Tenor media URLs often have png alternatives for stills.
 		if (host.endsWith('tenor.com')) {
 			if (/\.gif$/i.test(path)) {
 				url.pathname = path.replace(/\.gif$/i, '.png')
+				url.search = ''
 				return url.toString()
+			}
+			if (/\.mp4$/i.test(path)) {
+				// Tenor MP4s don't have a guaranteed static sibling; keep mp4 but we'll pause.
+				return undefined
 			}
 		}
 
-		// Giphy still variants commonly use *_s.gif.
 		if (host.includes('giphy.com')) {
 			if (/\/giphy\.gif$/i.test(path)) {
 				url.pathname = path.replace(/\/giphy\.gif$/i, '/giphy_s.gif')
@@ -100,13 +123,23 @@ function toStaticGifUri(uri: string): string | undefined {
 				url.pathname = path.replace(/\.gif$/i, '_s.gif')
 				return url.toString()
 			}
+			if (/\.mp4$/i.test(path)) return undefined
 		}
 
-		// Discord/media proxy: try requesting png format if supported.
-		if (host === 'media.discordapp.net' || host === 'cdn.discordapp.com') {
-			if (/\.gif(?:$)/i.test(path)) {
+		if (
+			host === 'media.discordapp.net' ||
+			host === 'cdn.discordapp.com' ||
+			host.endsWith('.discordapp.net')
+		) {
+			if (/\.gif$/i.test(path)) {
 				url.pathname = path.replace(/\.gif$/i, '.png')
 				url.searchParams.set('format', 'png')
+				url.searchParams.delete('frame')
+				return url.toString()
+			}
+			if (url.searchParams.get('format') === 'gif') {
+				url.searchParams.set('format', 'png')
+				url.searchParams.delete('frame')
 				return url.toString()
 			}
 		}
@@ -123,7 +156,7 @@ function toStaticGifUri(uri: string): string | undefined {
 }
 
 function pickStaticUri(value: unknown, depth = 0): string | undefined {
-	if (!isRecord(value) || depth > 3) return undefined
+	if (!isRecord(value) || depth > 4) return undefined
 
 	for (const key of STATIC_KEYS) {
 		const v = (value as any)[key]
@@ -137,7 +170,6 @@ function pickStaticUri(value: unknown, depth = 0): string | undefined {
 		}
 	}
 
-	// Common nested shapes: { url, proxy_url, width, height } etc.
 	for (const key of [
 		'image',
 		'images',
@@ -146,6 +178,7 @@ function pickStaticUri(value: unknown, depth = 0): string | undefined {
 		'preview',
 		'thumbnail',
 		'still',
+		'gif',
 	]) {
 		const v = (value as any)[key]
 		if (isRecord(v)) {
@@ -162,9 +195,10 @@ function rewriteUriMaybe(
 	staticHint?: string,
 ): string | undefined {
 	if (typeof uri !== 'string' || !uri) return undefined
-	if (staticHint && staticHint !== uri) return staticHint
-	if (!isProbablyGifUri(uri)) return undefined
-	return toStaticGifUri(uri)
+	if (staticHint && staticHint !== uri && isPickerLikelyMediaUri(uri))
+		return staticHint
+	if (isAnimatedMediaUri(uri)) return toStaticMediaUri(uri) ?? staticHint
+	return undefined
 }
 
 function freezeProps(props: any): any {
@@ -183,19 +217,18 @@ function freezeProps(props: any): any {
 	if ('isFocused' in props && props.isFocused === true)
 		ensure().isFocused = false
 	if ('focused' in props && props.focused === true) ensure().focused = false
-	if ('isVisible' in props && props.isVisible !== false) {
-		// keep visibility, but not as "actively playing" signal in some implementations
-	}
+	if ('shouldPlay' in props) ensure().shouldPlay = false
+	if ('isPlaying' in props) ensure().isPlaying = false
 
 	const staticHint =
 		pickStaticUri(props) ??
 		pickStaticUri(props.item) ??
 		pickStaticUri(props.gif) ??
 		pickStaticUri(props.data) ??
-		pickStaticUri(props.result)
+		pickStaticUri(props.result) ??
+		pickStaticUri(props.asset)
 
-	if (isRecord(props.source)) {
-		const src = props.source as Record<string, any>
+	const applyToSourceObj = (src: Record<string, any>) => {
 		const uri = src.uri ?? src.url ?? src.src
 		const rewritten = rewriteUriMaybe(uri, staticHint)
 		if (typeof rewritten === 'string' && rewritten && rewritten !== uri) {
@@ -203,16 +236,30 @@ function freezeProps(props: any): any {
 			if (
 				'uri' in newSource ||
 				typeof src.uri === 'string' ||
-				!('url' in newSource)
+				!('url' in newSource && !('uri' in newSource))
 			)
 				newSource.uri = rewritten
 			if ('url' in newSource) newSource.url = rewritten
 			if ('src' in newSource) newSource.src = rewritten
-			ensure().source = newSource
+			return newSource
 		}
+		return src
 	}
 
-	for (const key of ['src', 'uri', 'url', 'imageUrl', 'gifUrl', 'previewUrl']) {
+	if (isRecord(props.source)) {
+		const newSource = applyToSourceObj(props.source)
+		if (newSource !== props.source) ensure().source = newSource
+	}
+
+	for (const key of [
+		'src',
+		'uri',
+		'url',
+		'imageUrl',
+		'gifUrl',
+		'previewUrl',
+		'posterUrl',
+	]) {
 		const v = props[key]
 		if (typeof v === 'string') {
 			const rewritten = rewriteUriMaybe(v, staticHint)
@@ -226,6 +273,7 @@ function freezeProps(props: any): any {
 		'playerProps',
 		'animatedProps',
 		'mediaProps',
+		'posterSource',
 	]) {
 		const bag = props[bagKey]
 		if (isRecord(bag)) {
@@ -234,8 +282,7 @@ function freezeProps(props: any): any {
 		}
 	}
 
-	// If renderItem/item shape contains gif data, rewrite inside it too (shallowly).
-	for (const itemKey of ['item', 'gif', 'data', 'result']) {
+	for (const itemKey of ['item', 'gif', 'data', 'result', 'asset']) {
 		const item = props[itemKey]
 		if (isRecord(item)) {
 			const nextItem = freezeProps(item)
@@ -310,6 +357,10 @@ function looksLikeGifPickerComponentName(name: string): boolean {
 	if (!name) return false
 	if (GIF_PICKER_NAMES.has(name)) return true
 	if (name.includes('GIFPicker') || name.includes('GifPicker')) return true
+	if (/^GIFPicker/.test(name)) return true
+	// Some builds may use ExpressionPicker-related gif views
+	if (name.toLowerCase().includes('gif') && name.toLowerCase().includes('pick'))
+		return true
 	return false
 }
 
@@ -326,7 +377,6 @@ function patchFunctionComponent(
 
 		const name = String(fn.displayName ?? fn.name ?? key ?? '')
 		if (!looksLikeGifPickerComponentName(name) && key !== 'default') return
-		// If patching default by weak signal, require picker-ish name.
 		if (key === 'default' && !looksLikeGifPickerComponentName(name)) return
 
 		patchedFns.add(fn)
@@ -375,15 +425,127 @@ function scanNamespace(ns: any, cleanup: Cleanup): void {
 	walk(ns, 0)
 }
 
+function patchGifStore(cleanup: Cleanup): void {
+	try {
+		cleanup(
+			getModules(
+				withName('GIFPickerViewStore'),
+				(m: any) => {
+					try {
+						if (!isRecord(m)) return
+						const targets = [
+							m,
+							m.default,
+							m.store,
+							m.GIFPickerViewStore,
+						].filter(isRecord)
+						for (const t of targets) {
+							for (const key of Object.keys(t)) {
+								const fn = (t as any)[key]
+								if (typeof fn !== 'function') continue
+								if (
+									/shouldAnimate|getShouldAnimate|isAutoplay|autoplay/i.test(
+										key,
+									)
+								) {
+									if (patchedFns.has(fn)) continue
+									patchedFns.add(fn)
+									cleanup(afterLoose(t as any, key, () => false))
+								}
+							}
+						}
+					} catch {}
+				},
+				{ returnNamespace: true },
+			),
+		)
+	} catch {}
+
+	try {
+		cleanup(
+			getModules(
+				withProps('getTrendingSearchTerms', 'search'),
+				(m: any) => {
+					// best-effort: some gif picker stores/utils expose search-related methods; patch any autoplay flags if present
+					try {
+						if (!isRecord(m)) return
+						for (const key of Object.keys(m)) {
+							const fn = (m as any)[key]
+							if (typeof fn !== 'function') continue
+							if (/shouldAnimate|getShouldAnimate/i.test(key)) {
+								if (patchedFns.has(fn)) continue
+								patchedFns.add(fn)
+								cleanup(afterLoose(m, key, () => false))
+							}
+						}
+					} catch {}
+				},
+				{ returnNamespace: true },
+			),
+		)
+	} catch {}
+}
+
+function patchCreateElement(cleanup: Cleanup): void {
+	try {
+		const reactMod: any = React as any
+		const orig = reactMod.createElement
+		if (typeof orig !== 'function' || patchedFns.has(orig)) return
+		patchedFns.add(orig)
+
+		reactMod.createElement = function patchedCreateElement(
+			type: any,
+			props: any,
+			...children: any[]
+		) {
+			try {
+				// Only intervene when props suggest animated/media/gif picker content.
+				if (isRecord(props)) {
+					const sourceUri = isRecord(props.source)
+						? (props.source.uri ?? props.source.url ?? props.source.src)
+						: (props.uri ?? props.url ?? props.src)
+
+					const hasGifHint =
+						isAnimatedMediaUri(sourceUri) ||
+						(isPickerLikelyMediaUri(sourceUri) &&
+							('paused' in props ||
+								'autoPlay' in props ||
+								'autoplay' in props ||
+								'shouldPlay' in props ||
+								'isPlaying' in props ||
+								'shouldAnimate' in props))
+
+					if (hasGifHint) {
+						const nextProps = freezeProps(props)
+						if (nextProps !== props) {
+							return orig.call(this, type, nextProps, ...children)
+						}
+					}
+				}
+			} catch {}
+			return orig.call(this, type, props, ...children)
+		}
+
+		cleanup(() => {
+			try {
+				reactMod.createElement = orig
+			} catch {}
+		})
+	} catch {}
+}
+
 export default plugin({
 	start({ cleanup }) {
 		for (const name of [
+			'GIFPicker',
 			'GIFPickerItemView',
 			'GIFPickerResultItem',
 			'GIFPickerResultsList',
 			'GIFPickerCategoryView',
 			'GIFPickerCategoriesPage',
-			'GIFPicker',
+			'GIFPickerSearchSuggestions',
+			'GIFPickerNoResults',
+			'GIFPickerHeader',
 		]) {
 			try {
 				cleanup(
@@ -425,5 +587,8 @@ export default plugin({
 				),
 			)
 		} catch {}
+
+		patchGifStore(cleanup)
+		patchCreateElement(cleanup)
 	},
 })
