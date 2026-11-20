@@ -160,10 +160,74 @@ function patchSetNativeProps(cleanup: Cleanup): void {
 	} catch {}
 }
 
+function patchReactNativeImage(cleanup: Cleanup): void {
+	try {
+		cleanup(
+			getModules(
+				withName('Image'),
+				(m: any) => {
+					try {
+						if (!m || typeof m !== 'object') return
+						const targets = [m, m.default].filter(
+							(t: any) => t && typeof t === 'object',
+						)
+						for (const t of targets) {
+							// Einige RN-Builds exportieren Image als Klasse/Component mit createElement/setNativeProps intern.
+							for (const key of Object.keys(t)) {
+								const val = (t as any)[key]
+								if (typeof val !== 'function' || patchedFns.has(val)) continue
+								const name = String(
+									(val as any).displayName ?? (val as any).name ?? key,
+								)
+								if (
+									key !== 'createElement' &&
+									key !== 'setNativeProps' &&
+									!/createElement|setNativeProps/i.test(key)
+								)
+									continue
+								patchedFns.add(val)
+								const orig = val
+								;(t as any)[key] = function patchedMediaFn(
+									thisArg: any,
+									...a: any[]
+								) {
+									try {
+										// createElement(Image, props, ...) -> props an Index 1
+										// setNativeProps(props) -> props an Index 0
+										const isCreateElement =
+											key === 'createElement' || /createElement/i.test(key)
+										const propsIndex = isCreateElement ? 1 : 0
+										if (a[propsIndex] && typeof a[propsIndex] === 'object') {
+											const frozen = freezeElementProps(a[propsIndex])
+											if (frozen !== a[propsIndex]) {
+												const nextArgs = [...a]
+												nextArgs[propsIndex] = frozen
+												return orig.apply(thisArg, nextArgs)
+											}
+										}
+									} catch {}
+									return orig.apply(thisArg, a)
+								}
+								cleanup(() => {
+									try {
+										;(t as any)[key] = orig
+									} catch {}
+								})
+							}
+						}
+					} catch {}
+				},
+				{ returnNamespace: true },
+			),
+		)
+	} catch {}
+}
+
 export default plugin({
 	start({ cleanup }) {
 		patchReactCreateElement(cleanup)
 		patchSetNativeProps(cleanup)
+		patchReactNativeImage(cleanup)
 		debugLogOnce('started', 'freeze-gif-picker active')
 	},
 })
