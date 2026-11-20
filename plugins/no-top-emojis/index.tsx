@@ -1,4 +1,3 @@
-import { ToastActionCreators } from '@valenced/discord/actions'
 import { getModules } from '@valenced/modules/finders'
 import {
 	createFilterGenerator,
@@ -24,10 +23,6 @@ function report(key: string, detail: string): void {
 	const text = `${key}: ${detail}`
 	try {
 		console.log('[no-top-emojis]', text)
-		ToastActionCreators.open('HAKUXYZ_NO_TOP_EMOJIS_DIAG', {
-			text: text.slice(0, 180),
-			variant: 'default',
-		})
 	} catch {}
 }
 
@@ -73,6 +68,50 @@ function cleanValue(value: unknown, depth = 0): unknown {
 		next[key] = result
 	}
 	return next ?? value
+}
+
+function isTopHeader(value: unknown): boolean {
+	return (
+		isPlain(value) &&
+		value.type === 1 &&
+		typeof value.title === 'string' &&
+		/^top emoji/i.test(value.title)
+	)
+}
+
+function cleanPickerData(value: unknown): unknown {
+	if (
+		!isPlain(value) ||
+		!Array.isArray(value.data) ||
+		!Array.isArray(value.headerIndices)
+	) {
+		return value
+	}
+
+	const removed = new Set<number>()
+	for (let i = 0; i < value.data.length; i++) {
+		if (!isTopHeader(value.data[i])) continue
+		removed.add(i)
+		for (let j = i + 1; j < value.data.length; j++) {
+			if (isPlain(value.data[j]) && value.data[j].type === 1) break
+			removed.add(j)
+		}
+	}
+	if (!removed.size) return value
+
+	const indexMap = new Map<number, number>()
+	let nextIndex = 0
+	for (let i = 0; i < value.data.length; i++) {
+		if (!removed.has(i)) indexMap.set(i, nextIndex++)
+	}
+
+	return {
+		...value,
+		data: value.data.filter((_, i) => !removed.has(i)),
+		headerIndices: value.headerIndices
+			.map(index => indexMap.get(Number(index)))
+			.filter((index): index is number => index !== undefined),
+	}
 }
 
 function dump(value: unknown, depth = 0, limit = 4): string {
@@ -144,6 +183,10 @@ function patchComponent(name: string, fn: AnyFunction, cleanup: Cleanup): void {
 			}
 
 			const next = cleanValue(props) as Record<string, unknown>
+			if (name === 'EmojiPickerListComponent') {
+				const data = cleanPickerData(props.data)
+				if (data !== props.data) next.data = data
+			}
 			const changed = Object.keys(next).some(key => next[key] !== props[key])
 			return changed ? (cloneElement(el, next) as never) : (element as never)
 		} catch {
