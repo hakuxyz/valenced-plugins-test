@@ -5,7 +5,8 @@ import {
 } from '@valenced/modules/finders/filters'
 import { instead } from '@valenced/patcher'
 import { afterJSX } from '@valenced/react/jsx-runtime'
-import type { ElementType } from 'react'
+import { cloneElement } from 'react'
+import type { ElementType, ReactElement } from 'react'
 
 type LooseInstead = (
 	parent: Record<string, any>,
@@ -105,13 +106,7 @@ function patchAutoplayFunctions(): void {
 							if (patchedFunctions.has(original)) continue
 							ensureWritable(parent, key)
 							patchedFunctions.add(original)
-							if (
-								original.name === 'shouldUseAnimatedWebPThumbnail' ||
-								original.name === 'shouldAutoPlayGif' ||
-								original.name === 'shouldAutoplayGif'
-							) {
-								insteadLoose(parent, key, () => false)
-							}
+							insteadLoose(parent, key, () => false)
 							logOnce(
 								`fn:${original.name}`,
 								'patched autoplay function',
@@ -129,34 +124,63 @@ function patchAutoplayFunctions(): void {
 
 const GIF_ITEM_NAME = 'GIFPickerItemView'
 
-const gifPickerItemFilter = createFilterGenerator<[]>(
-	(_args, _id, exports) => {
-		return resolveNamed(exports, GIF_ITEM_NAME).length > 0
-	},
-	() => 'freezeGifPicker.gifPickerItem',
-	FilterScopes.Initialized,
-)
-
 function matchesName(value: unknown, name: string): boolean {
 	if (typeof value !== 'function') return false
 	return value.name === name || (value as any).displayName === name
 }
 
-function resolveNamed(exports: unknown, name: string): ElementType[] {
-	if (!isRecord(exports) && typeof exports !== 'function') return []
-	const namespace = exports as Record<string, any>
-	const candidates = [
-		namespace[name]?.type,
-		namespace[name],
-		namespace.default?.[name]?.type,
-		namespace.default?.[name],
-		namespace.default?.type,
-		namespace.default,
-		namespace,
-	]
-	return candidates.filter(candidate =>
-		matchesName(candidate, name),
-	) as ElementType[]
+function findNamed(
+	value: unknown,
+	name: string,
+	output: ElementType[],
+	depth = 0,
+): void {
+	if (depth > 3) return
+	if (matchesName(value, name)) {
+		output.push(value as ElementType)
+		return
+	}
+	if (!isRecord(value)) return
+	for (const key of Object.keys(value)) {
+		if (key === '_owner' || key === '_store' || key === '_self') continue
+		try {
+			findNamed(value[key], name, output, depth + 1)
+		} catch {}
+	}
+}
+
+const gifPickerItemFilter = createFilterGenerator<[]>(
+	(_args, _id, exports) => {
+		const found: ElementType[] = []
+		findNamed(exports, GIF_ITEM_NAME, found)
+		return found.length > 0
+	},
+	() => 'freezeGifPicker.gifPickerItem',
+	FilterScopes.Initialized,
+)
+
+function freezeItem(
+	element: ReactElement<Record<string, any>>,
+): ReactElement<Record<string, any>> {
+	const item = element.props?.item
+	if (!isRecord(item)) return element
+	const animated = item.gifSrc
+	const still = item.src
+	if (
+		typeof animated !== 'string' ||
+		typeof still !== 'string' ||
+		animated === still
+	) {
+		return element
+	}
+	logOnce(
+		'item:frozen',
+		'froze GIF item',
+		animated.slice(0, 160),
+		'->',
+		still.slice(0, 160),
+	)
+	return cloneElement(element, { item: { ...item, gifSrc: still } })
 }
 
 export default plugin({
@@ -199,19 +223,20 @@ export default plugin({
 				gifPickerItemFilter(),
 				(exports: unknown) => {
 					if (hooksInstalled) return
-					const components = resolveNamed(exports, GIF_ITEM_NAME)
-					if (components.length === 0) return
+					const found: ElementType[] = []
+					findNamed(exports, GIF_ITEM_NAME, found)
+					if (found.length === 0) return
 					hooksInstalled = true
 
 					let autoplayPatched = false
-					for (const component of components) {
+					for (const component of found) {
 						try {
 							const unpatch = afterJSX(component as never, element => {
 								if (!autoplayPatched) {
 									autoplayPatched = true
 									patchAutoplayFunctions()
 								}
-								return element
+								return freezeItem(element as ReactElement<Record<string, any>>)
 							})
 							cleanup(unpatch)
 							logOnce('gifitem:hook', 'installed GIF item hook')
