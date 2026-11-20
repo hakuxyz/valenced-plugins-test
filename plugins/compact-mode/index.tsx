@@ -248,6 +248,59 @@ function truncateName(name: string): string {
 	return name.length > USERNAME_MAX ? `${name.slice(0, USERNAME_MAX)}...` : name
 }
 
+function dumpModulesDiag(): void {
+	const unsub = getModules(
+		(() => true) as unknown as any,
+		(exports: any) => {
+			if (exports == null || typeof exports !== 'object') return
+			try {
+				const name = String(exports.name ?? exports.displayName ?? '')
+				const hasSUF =
+					typeof exports.showUserProfile === 'function' ||
+					typeof exports.default?.showUserProfile === 'function'
+				const hasPressable = typeof exports.Pressable === 'function'
+				const chatish = name !== '' && /chat/i.test(name)
+				if (hasSUF || hasPressable || chatish) {
+					console.log(
+						`[CM-DUMP] name=${name} showUserProfile=${hasSUF} Pressable=${hasPressable}`,
+					)
+				}
+			} catch {}
+		},
+		{ max: 2000 },
+	)
+	setTimeout(() => {
+		try {
+			unsub()
+		} catch {}
+	}, 5000)
+}
+
+let treeDumpCount = 0
+function dumpTree(el: any, depth: number, maxDepth: number): void {
+	if (treeDumpCount > 60 || depth > maxDepth || !el || typeof el !== 'object')
+		return
+	try {
+		const typeName =
+			typeof el.type === 'string'
+				? el.type
+				: (el.type?.name ??
+					el.type?.displayName ??
+					el.type?.render?.name ??
+					'anon')
+		const keys = Object.keys(el.props ?? {})
+		console.log(`[CM-DUMP] tree d${depth}: ${typeName} keys=${keys.join(',')}`)
+		treeDumpCount++
+		const children = el.props?.children
+		const kids = Array.isArray(children)
+			? children
+			: children != null
+				? [children]
+				: []
+		for (const kid of kids) dumpTree(kid, depth + 1, maxDepth)
+	} catch {}
+}
+
 function usernameNode(out: any, raw: any): AstNode {
 	const fullName = displayName(out, raw)
 	const name = truncateName(fullName)
@@ -596,6 +649,8 @@ export default plugin<{ jsonStorage: Settings }>({
 					cleanup(
 						afterLoose(Chat.prototype, 'render', (result: any) => {
 							try {
+								treeDumpCount = 0
+								dumpTree(result, 0, 7)
 								return wrapTaps(result, 0)
 							} catch {
 								return result
@@ -618,6 +673,12 @@ export default plugin<{ jsonStorage: Settings }>({
 		toast(
 			`CM start: showUserProfile=${!!showUserProfile} RN=${!!RN?.Pressable} Chat=${chatFound}`,
 		)
+
+		setTimeout(() => {
+			try {
+				dumpModulesDiag()
+			} catch {}
+		}, 500)
 
 		cleanup(
 			getModules(withName('RowManager'), exports => install(exports, cleanup), {
