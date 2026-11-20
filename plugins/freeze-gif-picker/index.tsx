@@ -1,4 +1,9 @@
 import { getModules } from '@valenced/modules/finders'
+import {
+	createFilterGenerator,
+	FilterScopes,
+	withName,
+} from '@valenced/modules/finders/filters'
 import { afterJSX } from '@valenced/react/jsx-runtime'
 import { cloneElement } from 'react'
 import type { ElementType, ReactElement } from 'react'
@@ -40,6 +45,14 @@ function isRecord(value: unknown): value is Record<string, any> {
 	return value !== null && typeof value === 'object'
 }
 
+function isComponentValue(value: unknown): boolean {
+	if (typeof value === 'function') return true
+	return (
+		isRecord(value) &&
+		('$$typeof' in value || 'type' in value || 'render' in value)
+	)
+}
+
 function componentName(value: unknown): string {
 	if (typeof value !== 'function' && !isRecord(value)) return ''
 	const candidate = value as Record<string, any>
@@ -51,7 +64,7 @@ function componentName(value: unknown): string {
 	)
 }
 
-function isGifComponentName(name: string): boolean {
+function isGifName(name: string): boolean {
 	return /gif/i.test(name)
 }
 
@@ -195,36 +208,52 @@ function installJsxHook(
 	}
 }
 
-function collectGifComponents(
+function collectComponents(
 	value: unknown,
 	output: Set<ElementType>,
+	force: boolean,
 	depth = 0,
 ): void {
 	if (depth > 3 || (!isRecord(value) && typeof value !== 'function')) return
 
 	const name = componentName(value)
-	if (name && isGifComponentName(name)) output.add(value as ElementType)
+	if (isComponentValue(value) && (force || isGifName(name))) {
+		output.add(value as ElementType)
+	}
 
 	if (!isRecord(value) || depth >= 3) return
-	for (const key of Object.keys(value)) {
+	const record = value as Record<string, any>
+	for (const key of Object.keys(record)) {
 		if (key === '_owner' || key === '_store' || key === '_self') continue
 		try {
-			collectGifComponents(value[key], output, depth + 1)
+			collectComponents(record[key], output, force, depth + 1)
 		} catch {}
 	}
 }
 
+const gifComponentsFilter = createFilterGenerator<[]>(
+	(_args, id, exports) => {
+		try {
+			if (typeof id === 'string' && isGifName(id)) return true
+		} catch {}
+		return hasGifHint(exports)
+	},
+	() => 'freezeGifPicker.gifComponents',
+	FilterScopes.Initialized,
+)
+
 function hasGifHint(value: unknown, depth = 0): boolean {
 	if (depth > 2 || (!isRecord(value) && typeof value !== 'function'))
 		return false
-	if (isGifComponentName(componentName(value))) return true
+	if (isGifName(componentName(value))) return true
 	if (!isRecord(value)) return false
+	const record = value as Record<string, any>
 
-	return Object.keys(value).some(key => {
+	return Object.keys(record).some(key => {
 		if (key === '_owner' || key === '_store' || key === '_self') return false
-		if (/gif/i.test(key)) return true
+		if (isGifName(key)) return true
 		try {
-			return hasGifHint(value[key], depth + 1)
+			return hasGifHint(record[key], depth + 1)
 		} catch {
 			return false
 		}
@@ -235,12 +264,58 @@ function patchGifComponents(cleanup: Cleanup): void {
 	try {
 		cleanup(
 			getModules(
-				(moduleExports: unknown) => hasGifHint(moduleExports),
-				(moduleExports: unknown) => {
+				gifComponentsFilter(),
+				(exports: unknown) => {
 					const found = new Set<ElementType>()
-					collectGifComponents(moduleExports, found)
+					collectComponents(exports, found, true)
 					for (const component of found) {
-						installJsxHook(component, componentName(component), cleanup)
+						const name = componentName(component) || 'GIFComponent'
+						logOnce(`found:${name}`, 'found gif component', name)
+						installJsxHook(component, name, cleanup)
+					}
+				},
+				{ returnNamespace: true },
+			),
+		)
+	} catch {}
+}
+
+function resolveNamedComponents(exports: unknown, name: string): ElementType[] {
+	if (!isRecord(exports) && typeof exports !== 'function') return []
+	const namespace = exports as Record<string, any>
+	const candidates = [
+		namespace[name]?.type,
+		namespace[name],
+		namespace.default?.[name]?.type,
+		namespace.default?.[name],
+		namespace.default?.type,
+		namespace.default,
+		namespace,
+	]
+
+	const resolved: ElementType[] = []
+	for (const candidate of candidates) {
+		if (!isComponentValue(candidate)) continue
+		const candidateName = componentName(candidate)
+		if (candidateName && candidateName !== name) continue
+		if (!patchedComponents.has(candidate as ElementType)) {
+			resolved.push(candidate as ElementType)
+		}
+	}
+	return resolved
+}
+
+function patchImageComponent(
+	name: 'Image' | 'ImageBackground',
+	cleanup: Cleanup,
+): void {
+	try {
+		cleanup(
+			getModules(
+				withName(name),
+				(exports: unknown) => {
+					for (const component of resolveNamedComponents(exports, name)) {
+						installJsxHook(component, `react-native:${name}`, cleanup)
 					}
 				},
 				{ returnNamespace: true },
@@ -254,7 +329,9 @@ export default plugin({
 		for (const type of HOST_MEDIA_TYPES) {
 			installJsxHook(type as ElementType, `host:${type}`, cleanup)
 		}
+		patchImageComponent('Image', cleanup)
+		patchImageComponent('ImageBackground', cleanup)
 		patchGifComponents(cleanup)
-		logOnce('started', 'freeze-gif-picker active (afterJSX)')
+		logOnce('started', 'freeze-gif-picker active (afterJSX fixed filters)')
 	},
 })
