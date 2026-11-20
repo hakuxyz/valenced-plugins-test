@@ -1,3 +1,4 @@
+import { ToastActionCreators } from '@valenced/discord/actions'
 import { getModuleWithImportedPath } from '@valenced/discord/utils/modules/finders'
 import { getModules } from '@valenced/modules/finders'
 import { withProps } from '@valenced/modules/finders/filters'
@@ -22,6 +23,8 @@ const afterLoose = after as unknown as LooseAfter
 const insteadLoose = instead as unknown as LooseInstead
 
 const TOP_EMOJI_STORE = 'modules/emojis/top_emojis/TopEmojiStore.tsx'
+const TOP_EMOJI_HOOK =
+	'modules/emoji_picker/hooks/useTopAndNewlyAddedEmojis.tsx'
 const PICKER_DATA =
 	'modules/emoji_picker/native/components/data/useEmojiPickerData.tsx'
 const PICKER_SECTION =
@@ -36,10 +39,28 @@ const STORE_GETTERS = [
 
 const TOP_EMOJI =
 	/top[\s_-]*(?:server[\s_-]*)?emoj|emoj[\s_-]*(?:server[\s_-]*)?top/i
-const MARKER_KEY =
-	/^(id|type|key|kind|name|title|label|section|category|source|sourceId|sectionId|categoryId)$/i
+
+const found: Record<string, boolean> = {
+	store: false,
+	hook: false,
+	data: false,
+	section: false,
+}
 
 const patched = new WeakSet<AnyFunction>()
+
+function report(): void {
+	const summary = Object.entries(found)
+		.map(([key, value]) => `${key}:${value ? 'y' : 'n'}`)
+		.join(' ')
+	try {
+		console.log('[no-top-emojis]', summary)
+		ToastActionCreators.open('HAKUXYZ_NO_TOP_EMOJIS_DIAG', {
+			text: summary,
+			variant: 'default',
+		})
+	} catch {}
+}
 
 function isRecord(value: unknown): value is Record<string, any> {
 	return typeof value === 'object' && value !== null
@@ -57,14 +78,12 @@ function isTopEmojiItem(value: unknown, depth = 0): boolean {
 		return value.some(item => isTopEmojiItem(item, depth))
 	if (!isPlain(value) || depth > 3) return false
 
-	return Object.entries(value).some(([key, item]) => {
-		if (!MARKER_KEY.test(key)) return false
+	return Object.values(value).some(item => {
 		if (typeof item === 'string') return TOP_EMOJI.test(item)
 		return isTopEmojiItem(item, depth + 1)
 	})
 }
 
-/** Drop top emoji sections without rebuilding untouched data. */
 function stripTopEmojis(value: unknown, depth = 0): unknown {
 	if (!isPlain(value) && !Array.isArray(value)) return value
 	if (depth > 4) return value
@@ -79,6 +98,27 @@ function stripTopEmojis(value: unknown, depth = 0): unknown {
 		const result = stripTopEmojis(item, depth + 1)
 		if (result === item) continue
 		if (!next) next = { ...value }
+		next[key] = result
+	}
+	return next ?? value
+}
+
+/** Keep newly added emojis, but empty anything belonging to top emojis. */
+function blankTopEmojis(value: unknown): unknown {
+	if (!isPlain(value)) return stripTopEmojis(value)
+
+	let next: Record<string, unknown> | undefined
+	for (const [key, item] of Object.entries(value)) {
+		if (TOP_EMOJI.test(key)) {
+			if (Array.isArray(item) || isPlain(item)) {
+				next ??= { ...value }
+				next[key] = Array.isArray(item) ? [] : {}
+			}
+			continue
+		}
+		const result = stripTopEmojis(item)
+		if (result === item) continue
+		next ??= { ...value }
 		next[key] = result
 	}
 	return next ?? value
@@ -121,6 +161,7 @@ function patchGetter(
 
 function patchStore(exports: unknown, cleanup: Cleanup): void {
 	if (!isRecord(exports)) return
+	found.store = true
 
 	for (const key of STORE_GETTERS) {
 		patchGetter(exports, key, [], cleanup)
@@ -130,8 +171,27 @@ function patchStore(exports: unknown, cleanup: Cleanup): void {
 	}
 }
 
+function patchHook(exports: unknown, cleanup: Cleanup): void {
+	if (!isRecord(exports)) return
+	found.hook = true
+
+	for (const [key, value] of Object.entries(exports)) {
+		if (typeof value !== 'function') continue
+		const original = value as AnyFunction
+		if (patched.has(original)) continue
+		try {
+			ensureWritable(exports, key)
+			patched.add(original)
+			cleanup(afterLoose(exports, key, result => blankTopEmojis(result)))
+		} catch {
+			patched.delete(original)
+		}
+	}
+}
+
 function patchDataHook(exports: unknown, cleanup: Cleanup): void {
 	if (!isRecord(exports)) return
+	found.data = true
 
 	for (const [key, value] of Object.entries(exports)) {
 		if (typeof value !== 'function' || !/emojiPickerData/i.test(key)) continue
@@ -149,6 +209,7 @@ function patchDataHook(exports: unknown, cleanup: Cleanup): void {
 
 function patchSectionRow(exports: unknown, cleanup: Cleanup): void {
 	if (!isRecord(exports)) return
+	found.section = true
 
 	for (const [key, value] of Object.entries(exports)) {
 		if (typeof value !== 'function') continue
@@ -172,6 +233,11 @@ function patchSectionRow(exports: unknown, cleanup: Cleanup): void {
 export default plugin({
 	start({ cleanup }) {
 		cleanup(
+			getModuleWithImportedPath<Record<string, any>>(TOP_EMOJI_HOOK, exports =>
+				patchHook(exports, cleanup),
+			),
+		)
+		cleanup(
 			getModuleWithImportedPath<Record<string, any>>(TOP_EMOJI_STORE, exports =>
 				patchStore(exports, cleanup),
 			),
@@ -191,5 +257,7 @@ export default plugin({
 				patchSectionRow(exports, cleanup),
 			),
 		)
+		const timer = setTimeout(report, 1500)
+		cleanup(() => clearTimeout(timer))
 	},
 })
