@@ -1,7 +1,8 @@
 import { Stores } from '@valenced/discord/flux'
 import { getModules } from '@valenced/modules/finders'
-import { withName } from '@valenced/modules/finders/filters'
+import { withName, withProps } from '@valenced/modules/finders/filters'
 import { after, before } from '@valenced/patcher'
+import { createElement } from 'react'
 import SettingsComponent from './settings'
 import { DefaultSettings } from './shared'
 import { currentSettings, setStorage } from './state'
@@ -28,6 +29,13 @@ const afterLoose = after as unknown as LooseAfter
 const REAL_IS_FIRST = 'vd_cm_realIsFirst'
 const BRAND_COLOR = 0x5865f2
 const SUPPORTED_TYPES = new Set([0, 19, 20])
+const USERNAME_MAX = 17
+
+const avatarTapMap = new Map<string, string>()
+const usernameTapMap = new Map<string, string>()
+
+let showUserProfile: ((props: any) => void) | undefined
+let RN: any
 
 interface AstNode {
 	type: string
@@ -181,16 +189,26 @@ function avatarUrl(raw: any): string | undefined {
 		const member = store('GuildMemberStore')?.getMember?.(raw?.guildId, userId)
 		if (member?.avatar && raw?.guildId) {
 			const extension = String(member.avatar).startsWith('a_') ? 'gif' : 'png'
-			return `https://cdn.discordapp.com/guilds/${raw.guildId}/users/${userId}/avatars/${member.avatar}.${extension}?size=32`
+			const url = `https://cdn.discordapp.com/guilds/${raw.guildId}/users/${userId}/avatars/${member.avatar}.${extension}?size=32`
+			rememberAvatar(url, userId)
+			return url
 		}
 
 		if (author.avatar == null) return undefined
 		const hash = String(author.avatar)
 		const extension = hash.startsWith('a_') ? 'gif' : 'png'
-		return `https://cdn.discordapp.com/avatars/${userId}/${hash}.${extension}?size=32`
+		const url = `https://cdn.discordapp.com/avatars/${userId}/${hash}.${extension}?size=32`
+		rememberAvatar(url, userId)
+		return url
 	} catch {
 		return undefined
 	}
+}
+
+function rememberAvatar(url: string, userId: unknown): void {
+	if (!url || userId == null) return
+	avatarTapMap.set(url, String(userId))
+	if (avatarTapMap.size > 200) avatarTapMap.clear()
 }
 
 function displayName(out: any, raw: any): string {
@@ -225,8 +243,70 @@ function usernameTextNode(name: string): AstNode {
 	}
 }
 
+function truncateName(name: string): string {
+	return name.length > USERNAME_MAX ? `${name.slice(0, USERNAME_MAX)}...` : name
+}
+
 function usernameNode(out: any, raw: any): AstNode {
-	return usernameTextNode(displayName(out, raw))
+	const name = truncateName(displayName(out, raw))
+	const tapId = raw?.author?.id ? String(raw.author.id) : undefined
+	if (name && tapId) {
+		usernameTapMap.set(name, tapId)
+		if (usernameTapMap.size > 200) usernameTapMap.clear()
+	}
+	return usernameTextNode(name)
+}
+
+function openProfile(userId: string): void {
+	try {
+		showUserProfile?.({ userId })
+	} catch {}
+}
+
+function findTapTarget(el: any): string | undefined {
+	if (!el || typeof el !== 'object') return undefined
+	const props = (el as any).props
+	if (!props) return undefined
+
+	const source = props.source
+	const uri = Array.isArray(source) ? source[0]?.uri : source?.uri
+	if (uri && avatarTapMap.get(uri)) return avatarTapMap.get(uri)
+
+	const text = props.children
+	if (typeof text === 'string' && text) return usernameTapMap.get(text)
+	return undefined
+}
+
+function wrapTaps(el: any, depth: number): any {
+	if (depth > 20 || !el || typeof el !== 'object') return el
+
+	const userId = findTapTarget(el)
+	const Pressable = RN?.Pressable ?? RN?.TouchableOpacity
+	if (userId && Pressable && typeof showUserProfile === 'function') {
+		return createElement(Pressable, { onPress: () => openProfile(userId) }, el)
+	}
+
+	const props = (el as any).props
+	if (props && props.children !== undefined) {
+		const newChildren = wrapChildren(props.children, depth + 1)
+		if (newChildren !== props.children) {
+			return createElement(el.type, { ...props, children: newChildren }, el.key)
+		}
+	}
+	return el
+}
+
+function wrapChildren(children: any, depth: number): any {
+	if (Array.isArray(children)) {
+		let changed = false
+		const out = children.map(child => {
+			const wrapped = wrapTaps(child, depth)
+			if (wrapped !== child) changed = true
+			return wrapped
+		})
+		return changed ? out : children
+	}
+	return wrapTaps(children, depth)
 }
 
 function iconRoleNodes(raw: any, settings: Settings): AstNode[] {
@@ -418,6 +498,56 @@ export default plugin<{ jsonStorage: Settings }>({
 
 	start({ cleanup, jsonStorage }) {
 		setStorage(jsonStorage)
+
+		cleanup(() => {
+			avatarTapMap.clear()
+			usernameTapMap.clear()
+		})
+
+		cleanup(
+			getModules(
+				withProps('showUserProfile'),
+				exports => {
+					const fn =
+						(exports as any)?.showUserProfile ??
+						(exports as any)?.default?.showUserProfile
+					if (typeof fn === 'function') showUserProfile = fn
+				},
+				{ max: 5 },
+			),
+		)
+
+		cleanup(
+			getModules(
+				withProps('Button', 'Text', 'View'),
+				exports => {
+					RN = exports
+				},
+				{ max: 5 },
+			),
+		)
+
+		cleanup(
+			getModules(
+				withName('Chat'),
+				exports => {
+					const Chat =
+						(exports as any)?.default ?? (exports as any)?.Chat ?? exports
+					if (!Chat?.prototype) return
+					ensureWritable(Chat.prototype, 'render')
+					cleanup(
+						afterLoose(Chat.prototype, 'render', (result: any) => {
+							try {
+								return wrapTaps(result, 0)
+							} catch {
+								return result
+							}
+						}),
+					)
+				},
+				{ max: 5 },
+			),
+		)
 
 		cleanup(
 			getModules(withName('RowManager'), exports => install(exports, cleanup), {
