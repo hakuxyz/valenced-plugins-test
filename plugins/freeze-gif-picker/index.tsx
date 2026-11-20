@@ -68,6 +68,15 @@ function isGifName(name: string): boolean {
 	return /gif/i.test(name)
 }
 
+function safeStringify(value: unknown, limit = 1500): string {
+	try {
+		const text = JSON.stringify(value)
+		return text.length > limit ? `${text.slice(0, limit)}...` : text
+	} catch {
+		return String(value)
+	}
+}
+
 function sourceInfo(props: Record<string, any>): unknown {
 	const source =
 		props.source ??
@@ -193,6 +202,13 @@ function installJsxHook(
 					Object.keys(props).sort(),
 					sourceInfo(props),
 				)
+				if (tag === 'GIFPickerItemView') {
+					logOnce(
+						'item:diag',
+						'GIFPickerItemView item',
+						safeStringify(props.item),
+					)
+				}
 				return freezeElement(element as ReactElement<Record<string, any>>, tag)
 			} catch {
 				return element
@@ -305,6 +321,25 @@ function resolveNamedComponents(exports: unknown, name: string): ElementType[] {
 	return resolved
 }
 
+const autoplayModuleFilter = createFilterGenerator<[]>(
+	(_args, _id, exports) => {
+		try {
+			if (!isRecord(exports)) return false
+			const keys = Object.keys(exports)
+			if (keys.some(key => /autoplay|autoPlay|AutoPlay/i.test(key))) return true
+			const nested = (exports as Record<string, any>).default
+			return (
+				isRecord(nested) &&
+				Object.keys(nested).some(key => /autoplay|autoPlay|AutoPlay/i.test(key))
+			)
+		} catch {
+			return false
+		}
+	},
+	() => 'freezeGifPicker.autoplayModules',
+	FilterScopes.Initialized,
+)
+
 function patchImageComponent(
 	name: 'Image' | 'ImageBackground',
 	cleanup: Cleanup,
@@ -332,6 +367,20 @@ export default plugin({
 		patchImageComponent('Image', cleanup)
 		patchImageComponent('ImageBackground', cleanup)
 		patchGifComponents(cleanup)
-		logOnce('started', 'freeze-gif-picker active (afterJSX fixed filters)')
+		cleanup(
+			getModules(
+				autoplayModuleFilter(),
+				(exports: unknown, id) => {
+					const keys = isRecord(exports)
+						? Object.keys(exports).filter(key =>
+								/autoplay|autoPlay|AutoPlay/i.test(key),
+							)
+						: []
+					logOnce(`autoplay:${id}`, 'autoplay module', String(id), keys)
+				},
+				{ returnNamespace: true },
+			),
+		)
+		logOnce('started', 'freeze-gif-picker active (afterJSX diagnostics)')
 	},
 })

@@ -4,7 +4,7 @@
 	"name": "Freeze GIF Picker",
 	"description": "Stop GIFs from playing in the GIF picker.",
 	"author": "hakuxyz (https://github.com/hakuxyz \"GitHub\")",
-	"version": "1.1.4",
+	"version": "1.1.5",
 	"icon": "GifIcon",
 	"dependencies": {
 		"valenced.api": {
