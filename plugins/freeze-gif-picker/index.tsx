@@ -20,6 +20,20 @@ function isRecord(value: unknown): value is Record<string, any> {
 	return value !== null && typeof value === 'object'
 }
 
+function safeParents(exports: unknown): Record<string, any>[] {
+	try {
+		if (!isRecord(exports)) return []
+		const parents = [exports]
+		try {
+			const fallback = exports.default
+			if (isRecord(fallback)) parents.push(fallback)
+		} catch {}
+		return parents
+	} catch {
+		return []
+	}
+}
+
 /** Metro re-exports members as getters. Make them writable before patching. */
 function ensureWritable(parent: any, key: string): void {
 	try {
@@ -49,13 +63,22 @@ function logOnce(key: string, ...args: unknown[]): void {
 
 const gifAutoPlayFilter = createFilterGenerator<[]>(
 	(_args, _id, exports) => {
-		if (!isRecord(exports)) return false
-		const target = (exports as Record<string, any>).GifAutoPlay
-		return (
-			isRecord(target) &&
-			typeof target.getSetting === 'function' &&
-			typeof target.useSetting === 'function'
-		)
+		try {
+			if (!isRecord(exports)) return false
+			let target: unknown
+			try {
+				target = exports.GifAutoPlay
+			} catch {
+				return false
+			}
+			return (
+				isRecord(target) &&
+				typeof target.getSetting === 'function' &&
+				typeof target.useSetting === 'function'
+			)
+		} catch {
+			return false
+		}
 	},
 	() => 'freezeGifPicker.gifAutoPlay',
 	FilterScopes.Initialized,
@@ -69,18 +92,23 @@ const AUTOPLAY_FUNCTION_NAMES = new Set([
 
 const autoplayFunctionFilter = createFilterGenerator<[]>(
 	(_args, _id, exports) => {
-		if (!isRecord(exports)) return false
-		const parents = isRecord(exports.default)
-			? [exports, exports.default]
-			: [exports]
-		return parents.some(parent =>
-			Object.keys(parent).some(key => {
-				const value = parent[key]
-				return (
-					typeof value === 'function' && AUTOPLAY_FUNCTION_NAMES.has(value.name)
-				)
-			}),
-		)
+		try {
+			return safeParents(exports).some(parent =>
+				Object.keys(parent).some(key => {
+					try {
+						const value = parent[key]
+						return (
+							typeof value === 'function' &&
+							AUTOPLAY_FUNCTION_NAMES.has(value.name)
+						)
+					} catch {
+						return false
+					}
+				}),
+			)
+		} catch {
+			return false
+		}
 	},
 	() => 'freezeGifPicker.autoplayFunctions',
 	FilterScopes.Initialized,
@@ -93,12 +121,14 @@ function patchAutoplayFunctions(): void {
 		getModules(
 			autoplayFunctionFilter(),
 			(exports: unknown) => {
-				if (!isRecord(exports)) return
-				const parents = isRecord(exports.default)
-					? [exports, exports.default]
-					: [exports]
-				for (const parent of parents) {
-					for (const key of Object.keys(parent)) {
+				for (const parent of safeParents(exports)) {
+					let keys: string[]
+					try {
+						keys = Object.keys(parent)
+					} catch {
+						continue
+					}
+					for (const key of keys) {
 						try {
 							const original = parent[key]
 							if (typeof original !== 'function') continue
@@ -125,14 +155,18 @@ function patchAutoplayFunctions(): void {
 const GIF_ITEM_NAME = 'GIFPickerItemView'
 
 function matchesName(value: unknown, name: string): boolean {
-	if (typeof value === 'function') {
-		return value.name === name || (value as any).displayName === name
+	try {
+		if (typeof value === 'function') {
+			return value.name === name || (value as any).displayName === name
+		}
+		if (!isRecord(value)) return false
+		return (
+			value.displayName === name ||
+			(value.type ? matchesName(value.type, name) : false)
+		)
+	} catch {
+		return false
 	}
-	if (!isRecord(value)) return false
-	return (
-		value.displayName === name ||
-		(value.type ? matchesName(value.type, name) : false)
-	)
 }
 
 function findNamed(
@@ -141,13 +175,19 @@ function findNamed(
 	output: ElementType[],
 	depth = 0,
 ): void {
-	if (depth > 3) return
+	if (depth > 4) return
 	if (matchesName(value, name)) {
 		output.push(value as ElementType)
 		return
 	}
 	if (!isRecord(value)) return
-	for (const key of Object.keys(value)) {
+	let keys: string[]
+	try {
+		keys = Object.keys(value)
+	} catch {
+		return
+	}
+	for (const key of keys) {
 		if (key === '_owner' || key === '_store' || key === '_self') continue
 		try {
 			findNamed(value[key], name, output, depth + 1)
@@ -157,9 +197,13 @@ function findNamed(
 
 const gifPickerItemFilter = createFilterGenerator<[]>(
 	(_args, _id, exports) => {
-		const found: ElementType[] = []
-		findNamed(exports, GIF_ITEM_NAME, found)
-		return found.length > 0
+		try {
+			const found: ElementType[] = []
+			findNamed(exports, GIF_ITEM_NAME, found)
+			return found.length > 0
+		} catch {
+			return false
+		}
 	},
 	() => 'freezeGifPicker.gifPickerItem',
 	FilterScopes.Initialized,
@@ -168,25 +212,29 @@ const gifPickerItemFilter = createFilterGenerator<[]>(
 function freezeItem(
 	element: ReactElement<Record<string, any>>,
 ): ReactElement<Record<string, any>> {
-	const item = element.props?.item
-	if (!isRecord(item)) return element
-	const animated = item.gifSrc
-	const still = item.src
-	if (
-		typeof animated !== 'string' ||
-		typeof still !== 'string' ||
-		animated === still
-	) {
+	try {
+		const item = element.props?.item
+		if (!isRecord(item)) return element
+		const animated = item.gifSrc
+		const still = item.src
+		if (
+			typeof animated !== 'string' ||
+			typeof still !== 'string' ||
+			animated === still
+		) {
+			return element
+		}
+		logOnce(
+			'item:frozen',
+			'froze GIF item',
+			animated.slice(0, 160),
+			'->',
+			still.slice(0, 160),
+		)
+		return cloneElement(element, { item: { ...item, gifSrc: still } })
+	} catch {
 		return element
 	}
-	logOnce(
-		'item:frozen',
-		'froze GIF item',
-		animated.slice(0, 160),
-		'->',
-		still.slice(0, 160),
-	)
-	return cloneElement(element, { item: { ...item, gifSrc: still } })
 }
 
 export default plugin({
@@ -195,29 +243,36 @@ export default plugin({
 			getModules(
 				gifAutoPlayFilter(),
 				(exports: unknown) => {
-					if (!isRecord(exports)) return
-					const target = (exports as Record<string, any>).GifAutoPlay
-					if (!isRecord(target)) return
-
-					for (const key of ['getSetting', 'useSetting'] as const) {
-						const fn = target[key]
-						if (typeof fn !== 'function') continue
+					try {
+						if (!isRecord(exports)) return
+						let target: unknown
 						try {
-							ensureWritable(target, key)
-							cleanup(
-								insteadLoose(target, key, function (args, original) {
-									const result = original.apply(this, args)
-									logOnce(
-										`gifautoplay:${key}`,
-										'GifAutoPlay original',
-										key,
-										String(result),
-									)
-									return false
-								}),
-							)
-						} catch {}
-					}
+							target = exports.GifAutoPlay
+						} catch {
+							return
+						}
+						if (!isRecord(target)) return
+
+						for (const key of ['getSetting', 'useSetting'] as const) {
+							const fn = target[key]
+							if (typeof fn !== 'function') continue
+							try {
+								ensureWritable(target, key)
+								cleanup(
+									insteadLoose(target, key, function (args, original) {
+										const result = original.apply(this, args)
+										logOnce(
+											`gifautoplay:${key}`,
+											'GifAutoPlay original',
+											key,
+											String(result),
+										)
+										return false
+									}),
+								)
+							} catch {}
+						}
+					} catch {}
 				},
 				{ returnNamespace: true },
 			),
@@ -231,28 +286,34 @@ export default plugin({
 				getModules(
 					gifPickerItemFilter(),
 					(exports: unknown) => {
-						if (hooksInstalled) return
-						const found: ElementType[] = []
-						findNamed(exports, GIF_ITEM_NAME, found)
-						if (found.length === 0) return
-						hooksInstalled = true
+						try {
+							if (hooksInstalled) return
+							const found: ElementType[] = []
+							findNamed(exports, GIF_ITEM_NAME, found)
+							if (found.length === 0) return
+							hooksInstalled = true
 
-						let autoplayPatched = false
-						for (const component of found) {
-							try {
-								const unpatch = afterJSX(component as never, element => {
-									if (!autoplayPatched) {
-										autoplayPatched = true
-										patchAutoplayFunctions()
-									}
-									return freezeItem(
-										element as ReactElement<Record<string, any>>,
-									)
-								})
-								cleanup(unpatch)
-								logOnce('gifitem:hook', 'installed GIF item hook')
-							} catch {}
-						}
+							let autoplayPatched = false
+							for (const component of found) {
+								try {
+									const unpatch = afterJSX(component as never, element => {
+										try {
+											if (!autoplayPatched) {
+												autoplayPatched = true
+												patchAutoplayFunctions()
+											}
+											return freezeItem(
+												element as ReactElement<Record<string, any>>,
+											)
+										} catch {
+											return element
+										}
+									})
+									cleanup(unpatch)
+									logOnce('gifitem:hook', 'installed GIF item hook')
+								} catch {}
+							}
+						} catch {}
 					},
 					{ returnNamespace: true },
 				)
@@ -262,8 +323,10 @@ export default plugin({
 		installGifItemHook()
 
 		const retry = setInterval(() => {
-			installGifItemHook()
-			patchAutoplayFunctions()
+			try {
+				if (!hooksInstalled) installGifItemHook()
+				if (!patchedFunctions.size) patchAutoplayFunctions()
+			} catch {}
 		}, 3000)
 		cleanup(() => clearInterval(retry))
 	},
