@@ -1,14 +1,11 @@
+import { processColor } from 'react-native'
 import { getDeletedReactions, reconcile, recordMessage } from './logger'
-import {
-	DeletedBurstColors,
-	emojiKey,
-	ReactionType,
-	reactionKey,
-} from './shared'
+import { emojiKey, ReactionType, reactionKey } from './shared'
 import type { MessageRow, ReactionData } from './shared'
 
 /** Discord marks a regenerated row as changed before sending it to native. */
 const UpdateChangeType = 2
+const DeepRed = processColor('#8B0000')
 
 function presentTypes(
 	messageId: string,
@@ -25,29 +22,46 @@ function presentTypes(
 }
 
 function styleDeleted(reaction: ReactionData): ReactionData {
-	const burst = Math.max(
-		reaction.burstCount ?? reaction.burst_count ?? reaction.count ?? 1,
-		1,
-	)
-	const colors = {
-		light: { ...DeletedBurstColors.light },
-		dark: { ...DeletedBurstColors.dark },
-		LIGHT: { ...DeletedBurstColors.light },
-		DARK: { ...DeletedBurstColors.dark },
-	}
-
-	return {
+	const styled: ReactionData = {
 		...reaction,
-		// A burst pill is native's per-reaction colored pill. Keeping count at
-		// zero avoids a second, normal pill for the same emoji.
-		count: 0,
-		burstCount: burst,
-		burst_count: burst,
+		count: Math.max(reaction.count ?? 1, 1),
 		me: false,
 		isMe: false,
 		isMeBurst: false,
-		themedBurstColors: colors,
-		themed_burst_colors: colors,
+	}
+
+	// A burst pill is what triggers Nitro's "A better way to react" prompt.
+	delete styled.burstCount
+	delete styled.burst_count
+	delete styled.themedBurstColors
+	delete styled.themed_burst_colors
+	return styled
+}
+
+function outlineReactions(row: MessageRow): void {
+	const border = DeepRed
+	const theme: Record<string, unknown> = {
+		reactionBackgroundColor: 0,
+		reactionBorderColor: border,
+		reactionTextColor: null,
+		activeReactionBackgroundColor: null,
+		activeReactionBorderColor: null,
+		activeReactionTextColor: null,
+		REACTION_BACKGROUND_COLOR: 0,
+		REACTION_BORDER_COLOR: border,
+		REACTION_TEXT_COLOR: null,
+		ACTIVE_REACTION_BACKGROUND_COLOR: null,
+		ACTIVE_REACTION_BORDER_COLOR: null,
+		ACTIVE_REACTION_TEXT_COLOR: null,
+	}
+
+	row.reactionsTheme = theme
+	for (const accessory of row.accessories ?? []) {
+		if (
+			accessory &&
+			(accessory.type === 'reactions' || accessory.reactionsTheme)
+		)
+			accessory.reactionsTheme = theme
 	}
 }
 
@@ -70,7 +84,6 @@ export function styleRow(row: MessageRow): MessageRow {
 	for (const entry of deleted) {
 		if (present.has(reactionKey(id, entry.reaction.emoji, entry.type))) continue
 
-		// Two logged types of one emoji would produce two red pills.
 		const emoji = emojiKey(entry.reaction.emoji)
 		if (restoredEmojis.has(emoji)) continue
 		restoredEmojis.add(emoji)
@@ -82,5 +95,6 @@ export function styleRow(row: MessageRow): MessageRow {
 
 	message.reactions = [...reactions, ...restored]
 	row.changeType = UpdateChangeType
+	outlineReactions(row)
 	return row
 }
