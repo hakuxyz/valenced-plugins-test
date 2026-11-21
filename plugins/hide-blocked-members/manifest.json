@@ -1,0 +1,20 @@
+{
+	"format": 1,
+	"id": "hakuxyz.hide-blocked-members",
+	"name": "Hide Blocked Members",
+	"description": "Hide blocked and optionally ignored users from server and group DM member lists.",
+	"author": "hakuxyz (https://github.com/hakuxyz \"GitHub\")",
+	"version": "1.0.0",
+	"icon": "FriendsIcon",
+	"dependencies": {
+		"valenced.api": {
+			"version": ">=1 <2"
+		},
+		"discord": {
+			"version": "*"
+		}
+	},
+	"dist": {
+		"script": "index.js"
+	}
+}
