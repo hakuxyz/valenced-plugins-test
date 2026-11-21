@@ -111,7 +111,7 @@ const autoplayFunctionFilter = createFilterGenerator<[]>(
 		}
 	},
 	() => 'freezeGifPicker.autoplayFunctions',
-	FilterScopes.Initialized,
+	FilterScopes.All,
 )
 
 const patchedFunctions = new Set<(...args: any[]) => any>()
@@ -206,7 +206,7 @@ const gifPickerItemFilter = createFilterGenerator<[]>(
 		}
 	},
 	() => 'freezeGifPicker.gifPickerItem',
-	FilterScopes.Initialized,
+	FilterScopes.All,
 )
 
 function freezeItem(
@@ -321,13 +321,16 @@ export default plugin({
 		}
 
 		installGifItemHook()
+		patchAutoplayFunctions()
 
-		const retry = setInterval(() => {
-			try {
-				if (!hooksInstalled) installGifItemHook()
-				if (!patchedFunctions.size) patchAutoplayFunctions()
-			} catch {}
-		}, 3000)
-		cleanup(() => clearInterval(retry))
+		const timers = [1000, 4000, 10000].map(delay =>
+			setTimeout(() => {
+				try {
+					if (!hooksInstalled) installGifItemHook()
+					if (!patchedFunctions.size) patchAutoplayFunctions()
+				} catch {}
+			}, delay),
+		)
+		cleanup(() => timers.forEach(clearTimeout))
 	},
 })
