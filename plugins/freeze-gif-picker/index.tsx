@@ -5,7 +5,8 @@ import {
 } from '@valenced/modules/finders/filters'
 import { instead } from '@valenced/patcher'
 import { afterJSX } from '@valenced/react/jsx-runtime'
-import type { ElementType } from 'react'
+import { cloneElement } from 'react'
+import type { ElementType, ReactElement } from 'react'
 
 type Cleanup = (...fns: Array<() => unknown>) => void
 
@@ -153,7 +154,7 @@ const autoplayFunctionFilter = createFilterGenerator<[]>(
 		}
 	},
 	() => 'freezeGifPicker.autoplayFunctions',
-	FilterScopes.Initialized,
+	FilterScopes.All,
 )
 
 const patchedFunctions = new Set<(...args: any[]) => any>()
@@ -194,65 +195,35 @@ function patchAutoplayFunctions(): void {
 	} catch {}
 }
 
-function componentName(value: unknown): string {
+const GIF_ITEM_NAME = 'GIFPickerItemView'
+
+function matchesName(value: unknown, name: string): boolean {
 	try {
-		if (typeof value !== 'function' && !isRecord(value)) return ''
-		const candidate = value as Record<string, any>
+		if (typeof value === 'function') {
+			return value.name === name || (value as any).displayName === name
+		}
+		if (!isRecord(value)) return false
 		return (
-			candidate.displayName ??
-			candidate.name ??
-			(candidate.type ? componentName(candidate.type) : '') ??
-			''
+			value.displayName === name ||
+			(value.type ? matchesName(value.type, name) : false)
 		)
 	} catch {
-		return ''
-	}
-}
-
-function isComponentValue(value: unknown): boolean {
-	if (typeof value === 'function') return true
-	return (
-		isRecord(value) &&
-		('$$typeof' in value || 'type' in value || 'render' in value)
-	)
-}
-
-function hasGifHint(value: unknown, depth = 0): boolean {
-	if (depth > 2 || (!isRecord(value) && typeof value !== 'function')) {
 		return false
 	}
-	if (/gif/i.test(componentName(value))) return true
-	if (!isRecord(value)) return false
-	return Object.keys(value).some(key => {
-		if (key === '_owner' || key === '_store' || key === '_self') return false
-		if (/gif/i.test(key)) return true
-		try {
-			return hasGifHint(value[key], depth + 1)
-		} catch {
-			return false
-		}
-	})
 }
 
-const gifComponentsFilter = createFilterGenerator<[]>(
-	(_args, id, exports) => {
-		try {
-			if (typeof id === 'string' && /gif/i.test(id)) return true
-		} catch {}
-		return hasGifHint(exports)
-	},
-	() => 'freezeGifPicker.gifComponents',
-	FilterScopes.Initialized,
-)
-
-function collectComponents(
+function findNamed(
 	value: unknown,
+	name: string,
 	output: ElementType[],
 	depth = 0,
 ): void {
-	if (depth > 3 || output.length >= 8) return
-	if (isComponentValue(value)) output.push(value as ElementType)
-	if (!isRecord(value) || depth >= 3) return
+	if (depth > 4) return
+	if (matchesName(value, name)) {
+		output.push(value as ElementType)
+		return
+	}
+	if (!isRecord(value)) return
 	let keys: string[]
 	try {
 		keys = Object.keys(value)
@@ -262,69 +233,147 @@ function collectComponents(
 	for (const key of keys) {
 		if (key === '_owner' || key === '_store' || key === '_self') continue
 		try {
-			collectComponents(value[key], output, depth + 1)
-			if (output.length >= 8) return
+			findNamed(value[key], name, output, depth + 1)
 		} catch {}
 	}
 }
 
-function installOneShotGifTrigger(cleanup: Cleanup): void {
-	const triggers = new Set<ElementType>()
-	const localUnpatches: Array<() => void> = []
-	let triggered = false
+const gifPickerItemFilter = createFilterGenerator<[]>(
+	(_args, _id, exports) => {
+		try {
+			const found: ElementType[] = []
+			findNamed(exports, GIF_ITEM_NAME, found)
+			return found.length > 0
+		} catch {
+			return false
+		}
+	},
+	() => 'freezeGifPicker.gifPickerItem',
+	FilterScopes.All,
+)
 
-	const removeTriggers = (): void => {
-		for (const unpatch of localUnpatches.splice(0)) {
-			try {
-				unpatch()
-			} catch {}
+function isHttpUrl(value: unknown): value is string {
+	return typeof value === 'string' && /^https?:\/\//i.test(value)
+}
+
+function isStillUrl(value: unknown): value is string {
+	return isHttpUrl(value) && /\.(?:jpe?g|png|webp)(?:[?#]|$)/i.test(value)
+}
+
+function findStillSource(value: unknown, depth = 0): string | undefined {
+	if (depth > 2) return undefined
+	if (isHttpUrl(value) && /\.(?:jpe?g|png)(?:[?#]|$)/i.test(value)) {
+		return value
+	}
+	if (!isRecord(value)) return undefined
+
+	for (const [key, nested] of Object.entries(value)) {
+		if (
+			/preview|still|static|thumbnail|thumb|poster/i.test(key) &&
+			isStillUrl(nested)
+		) {
+			return nested
 		}
 	}
-	cleanup(removeTriggers)
+	for (const key of ['url', 'src', 'uri', 'gifSrc', 'srcUrl'] as const) {
+		if (
+			isHttpUrl(value[key]) &&
+			/\.(?:jpe?g|png)(?:[?#]|$)/i.test(value[key])
+		) {
+			return value[key]
+		}
+	}
+	for (const nested of Object.values(value)) {
+		const found = findStillSource(nested, depth + 1)
+		if (found) return found
+	}
+	return undefined
+}
 
-	cleanup(
-		getModules(
-			gifComponentsFilter(),
-			(exports: unknown) => {
-				if (triggered || triggers.size >= 6) return
-				patchAutoplayFunctions()
+function freezeItem(
+	element: ReactElement<Record<string, any>>,
+): ReactElement<Record<string, any>> {
+	try {
+		const item = element.props?.item
+		if (!isRecord(item)) return element
 
-				const found: ElementType[] = []
-				collectComponents(exports, found)
-				for (const component of found) {
-					if (triggers.has(component)) continue
-					if (triggers.size >= 4) break
-					triggers.add(component)
-					try {
-						const unpatch = afterJSX(component as never, element => {
-							if (!triggered) {
-								triggered = true
-								patchAutoplayFunctions()
-								logOnce('giftrigger:render', 'GIF trigger rendered')
-								setTimeout(removeTriggers, 0)
-							}
-							return element
-						})
-						localUnpatches.push(unpatch)
-						logOnce(
-							'giftrigger:found',
-							'found GIF trigger component',
-							componentName(component) || 'unnamed',
-						)
-					} catch {
-						triggers.delete(component)
-					}
-				}
-			},
-			{ returnNamespace: true },
-		),
-	)
+		logOnce('item:keys', 'GIF item keys', Object.keys(item).sort().join(','))
+		for (const [key, value] of Object.entries(item)) {
+			if (typeof value === 'string') {
+				logOnce(`item:value:${key}`, 'GIF item value', key, value.slice(0, 220))
+			}
+		}
+
+		const still = findStillSource(item)
+		if (!still) return element
+
+		const next: Record<string, any> = { ...item, gifSrc: still }
+		if (typeof item.src === 'string') next.src = still
+		if ('isAnimated' in item) next.isAnimated = false
+		if ('animated' in item) next.animated = false
+
+		logOnce(
+			'item:frozen',
+			'froze GIF item with still source',
+			String(item.gifSrc).slice(0, 160),
+			'->',
+			still.slice(0, 160),
+		)
+		return cloneElement(element, { item: next })
+	} catch {
+		return element
+	}
 }
 
 export default plugin({
 	start({ cleanup }) {
 		installGifAutoPlayPatch(cleanup)
 		patchAutoplayFunctions()
-		installOneShotGifTrigger(cleanup)
+
+		let hooksInstalled = false
+
+		function installGifItemHook(): void {
+			if (hooksInstalled) return
+			try {
+				cleanup(
+					getModules(
+						gifPickerItemFilter(),
+						(exports: unknown) => {
+							try {
+								if (hooksInstalled) return
+								const found: ElementType[] = []
+								findNamed(exports, GIF_ITEM_NAME, found)
+								if (found.length === 0) return
+								hooksInstalled = true
+
+								let autoplayPatched = false
+								for (const component of found) {
+									try {
+										const unpatch = afterJSX(component as never, element => {
+											try {
+												if (!autoplayPatched) {
+													autoplayPatched = true
+													patchAutoplayFunctions()
+												}
+												return freezeItem(
+													element as ReactElement<Record<string, any>>,
+												)
+											} catch {
+												return element
+											}
+										})
+										cleanup(unpatch)
+										logOnce('gifitem:hook', 'installed GIF item hook')
+									} catch {}
+								}
+							} catch {}
+						},
+						{ returnNamespace: true },
+					),
+				)
+			} catch {}
+		}
+
+		installGifItemHook()
 	},
 })
