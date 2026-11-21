@@ -1,10 +1,10 @@
 import Page from '@valenced/components/Page'
 import { Design } from '@valenced/discord/design'
 import { ScrollView } from 'react-native'
-import { DefaultSettings } from './shared'
+import { DefaultSettings, SkinChoices, SkinLabels } from './shared'
 import type { PluginSettingsComponent } from '@valenced/plugins/types'
 import type { ComponentProps } from 'react'
-import type { Settings } from './shared'
+import type { Settings, SkinKey } from './shared'
 
 const { TableRadioGroup, TableRadioRow, TableSwitchRow, Text } = Design
 
@@ -28,6 +28,16 @@ export default function SettingsComponent({
 					value={settings.enabled}
 					onValueChange={enabled => storage.set({ enabled })}
 				/>
+
+				<TableRadioGroup
+					title="Cat skin"
+					value={settings.skin}
+					onChange={skin => storage.set({ skin: skin as SkinKey })}
+				>
+					{SkinChoices.map(skin => (
+						<TableRadioRow key={skin} label={SkinLabels[skin]} value={skin} />
+					))}
+				</TableRadioGroup>
 
 				<TableRadioGroup
 					title="Size"

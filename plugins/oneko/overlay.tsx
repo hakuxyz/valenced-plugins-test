@@ -3,15 +3,21 @@ import { Animated, Image, StyleSheet, View } from 'react-native'
 import { SizeValues, SpeedMultipliers } from './shared'
 import {
 	FRAME_SIZE,
-	ONEKO_SHEET_BASE64,
+	ONEKO_SHEETS,
 	SHEET_HEIGHT,
 	SHEET_WIDTH,
 	SPRITE_SETS,
 } from './sprites'
 import { getSettings, touch } from './state'
+import type { SkinKey } from './shared'
 import type { SpriteName } from './sprites'
 
-const sheet = { uri: `data:image/png;base64,${ONEKO_SHEET_BASE64}` }
+const sheets = Object.fromEntries(
+	(Object.keys(ONEKO_SHEETS) as SkinKey[]).map(key => [
+		key,
+		{ uri: `data:image/png;base64,${ONEKO_SHEETS[key]}` },
+	]),
+) as Record<SkinKey, { uri: string }>
 
 /** How long after the last touch the cat keeps chasing it. */
 const FOLLOW_WINDOW = 2500
@@ -40,6 +46,8 @@ let listeners = 0
 let sharedSprite: Sprite = SPRITE_SETS.idle[0]
 let sharedSize = SizeValues.medium
 let sharedEnabled = true
+let sharedSkin: SkinKey = 'classic'
+let sharedSheet = sheets.classic
 
 const subs = new Set<() => void>()
 
@@ -121,6 +129,11 @@ function tick() {
 		}
 		if (sharedEnabled !== settings.enabled) {
 			sharedEnabled = settings.enabled
+			changed = true
+		}
+		if (sharedSkin !== settings.skin) {
+			sharedSkin = settings.skin
+			sharedSheet = sheets[settings.skin] ?? sheets.classic
 			changed = true
 		}
 		if (changed) emit()
@@ -218,12 +231,14 @@ export default function OnekoOverlay() {
 	const [sprite, setSprite] = useState(sharedSprite)
 	const [size, setSize] = useState(sharedSize)
 	const [enabled, setEnabled] = useState(sharedEnabled)
+	const [sheet, setSheet] = useState(sharedSheet)
 
 	useEffect(() => {
 		const update = () => {
 			setSprite(sharedSprite)
 			setSize(sharedSize)
 			setEnabled(sharedEnabled)
+			setSheet(sharedSheet)
 		}
 		subs.add(update)
 		listeners++
