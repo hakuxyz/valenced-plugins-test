@@ -5,8 +5,9 @@ import {
 } from '@valenced/modules/finders/filters'
 import { instead } from '@valenced/patcher'
 import { afterJSX } from '@valenced/react/jsx-runtime'
-import { cloneElement } from 'react'
-import type { ElementType, ReactElement } from 'react'
+import type { ElementType } from 'react'
+
+type Cleanup = (...fns: Array<() => unknown>) => void
 
 type LooseInstead = (
 	parent: Record<string, any>,
@@ -84,6 +85,47 @@ const gifAutoPlayFilter = createFilterGenerator<[]>(
 	FilterScopes.Initialized,
 )
 
+function installGifAutoPlayPatch(cleanup: Cleanup): void {
+	cleanup(
+		getModules(
+			gifAutoPlayFilter(),
+			(exports: unknown) => {
+				try {
+					if (!isRecord(exports)) return
+					let target: unknown
+					try {
+						target = exports.GifAutoPlay
+					} catch {
+						return
+					}
+					if (!isRecord(target)) return
+
+					for (const key of ['getSetting', 'useSetting'] as const) {
+						const fn = target[key]
+						if (typeof fn !== 'function') continue
+						try {
+							ensureWritable(target, key)
+							cleanup(
+								insteadLoose(target, key, function (args, original) {
+									const result = original.apply(this, args)
+									logOnce(
+										`gifautoplay:${key}`,
+										'GifAutoPlay original',
+										key,
+										String(result),
+									)
+									return false
+								}),
+							)
+						} catch {}
+					}
+				} catch {}
+			},
+			{ returnNamespace: true },
+		),
+	)
+}
+
 const AUTOPLAY_FUNCTION_NAMES = new Set([
 	'shouldUseAnimatedWebPThumbnail',
 	'shouldAutoPlayGif',
@@ -111,7 +153,7 @@ const autoplayFunctionFilter = createFilterGenerator<[]>(
 		}
 	},
 	() => 'freezeGifPicker.autoplayFunctions',
-	FilterScopes.All,
+	FilterScopes.Initialized,
 )
 
 const patchedFunctions = new Set<(...args: any[]) => any>()
@@ -152,35 +194,65 @@ function patchAutoplayFunctions(): void {
 	} catch {}
 }
 
-const GIF_ITEM_NAME = 'GIFPickerItemView'
-
-function matchesName(value: unknown, name: string): boolean {
+function componentName(value: unknown): string {
 	try {
-		if (typeof value === 'function') {
-			return value.name === name || (value as any).displayName === name
-		}
-		if (!isRecord(value)) return false
+		if (typeof value !== 'function' && !isRecord(value)) return ''
+		const candidate = value as Record<string, any>
 		return (
-			value.displayName === name ||
-			(value.type ? matchesName(value.type, name) : false)
+			candidate.displayName ??
+			candidate.name ??
+			(candidate.type ? componentName(candidate.type) : '') ??
+			''
 		)
 	} catch {
-		return false
+		return ''
 	}
 }
 
-function findNamed(
+function isComponentValue(value: unknown): boolean {
+	if (typeof value === 'function') return true
+	return (
+		isRecord(value) &&
+		('$$typeof' in value || 'type' in value || 'render' in value)
+	)
+}
+
+function hasGifHint(value: unknown, depth = 0): boolean {
+	if (depth > 2 || (!isRecord(value) && typeof value !== 'function')) {
+		return false
+	}
+	if (/gif/i.test(componentName(value))) return true
+	if (!isRecord(value)) return false
+	return Object.keys(value).some(key => {
+		if (key === '_owner' || key === '_store' || key === '_self') return false
+		if (/gif/i.test(key)) return true
+		try {
+			return hasGifHint(value[key], depth + 1)
+		} catch {
+			return false
+		}
+	})
+}
+
+const gifComponentsFilter = createFilterGenerator<[]>(
+	(_args, id, exports) => {
+		try {
+			if (typeof id === 'string' && /gif/i.test(id)) return true
+		} catch {}
+		return hasGifHint(exports)
+	},
+	() => 'freezeGifPicker.gifComponents',
+	FilterScopes.Initialized,
+)
+
+function collectComponents(
 	value: unknown,
-	name: string,
 	output: ElementType[],
 	depth = 0,
 ): void {
-	if (depth > 4) return
-	if (matchesName(value, name)) {
-		output.push(value as ElementType)
-		return
-	}
-	if (!isRecord(value)) return
+	if (depth > 3 || output.length >= 8) return
+	if (isComponentValue(value)) output.push(value as ElementType)
+	if (!isRecord(value) || depth >= 3) return
 	let keys: string[]
 	try {
 		keys = Object.keys(value)
@@ -190,147 +262,69 @@ function findNamed(
 	for (const key of keys) {
 		if (key === '_owner' || key === '_store' || key === '_self') continue
 		try {
-			findNamed(value[key], name, output, depth + 1)
+			collectComponents(value[key], output, depth + 1)
+			if (output.length >= 8) return
 		} catch {}
 	}
 }
 
-const gifPickerItemFilter = createFilterGenerator<[]>(
-	(_args, _id, exports) => {
-		try {
-			const found: ElementType[] = []
-			findNamed(exports, GIF_ITEM_NAME, found)
-			return found.length > 0
-		} catch {
-			return false
-		}
-	},
-	() => 'freezeGifPicker.gifPickerItem',
-	FilterScopes.All,
-)
+function installOneShotGifTrigger(cleanup: Cleanup): void {
+	const triggers = new Set<ElementType>()
+	const localUnpatches: Array<() => void> = []
+	let triggered = false
 
-function freezeItem(
-	element: ReactElement<Record<string, any>>,
-): ReactElement<Record<string, any>> {
-	try {
-		const item = element.props?.item
-		if (!isRecord(item)) return element
-		const animated = item.gifSrc
-		const still = item.src
-		if (
-			typeof animated !== 'string' ||
-			typeof still !== 'string' ||
-			animated === still
-		) {
-			return element
+	const removeTriggers = (): void => {
+		for (const unpatch of localUnpatches.splice(0)) {
+			try {
+				unpatch()
+			} catch {}
 		}
-		logOnce(
-			'item:frozen',
-			'froze GIF item',
-			animated.slice(0, 160),
-			'->',
-			still.slice(0, 160),
-		)
-		return cloneElement(element, { item: { ...item, gifSrc: still } })
-	} catch {
-		return element
 	}
+	cleanup(removeTriggers)
+
+	cleanup(
+		getModules(
+			gifComponentsFilter(),
+			(exports: unknown) => {
+				if (triggered || triggers.size >= 6) return
+				patchAutoplayFunctions()
+
+				const found: ElementType[] = []
+				collectComponents(exports, found)
+				for (const component of found) {
+					if (triggers.has(component)) continue
+					if (triggers.size >= 4) break
+					triggers.add(component)
+					try {
+						const unpatch = afterJSX(component as never, element => {
+							if (!triggered) {
+								triggered = true
+								patchAutoplayFunctions()
+								logOnce('giftrigger:render', 'GIF trigger rendered')
+								setTimeout(removeTriggers, 0)
+							}
+							return element
+						})
+						localUnpatches.push(unpatch)
+						logOnce(
+							'giftrigger:found',
+							'found GIF trigger component',
+							componentName(component) || 'unnamed',
+						)
+					} catch {
+						triggers.delete(component)
+					}
+				}
+			},
+			{ returnNamespace: true },
+		),
+	)
 }
 
 export default plugin({
 	start({ cleanup }) {
-		cleanup(
-			getModules(
-				gifAutoPlayFilter(),
-				(exports: unknown) => {
-					try {
-						if (!isRecord(exports)) return
-						let target: unknown
-						try {
-							target = exports.GifAutoPlay
-						} catch {
-							return
-						}
-						if (!isRecord(target)) return
-
-						for (const key of ['getSetting', 'useSetting'] as const) {
-							const fn = target[key]
-							if (typeof fn !== 'function') continue
-							try {
-								ensureWritable(target, key)
-								cleanup(
-									insteadLoose(target, key, function (args, original) {
-										const result = original.apply(this, args)
-										logOnce(
-											`gifautoplay:${key}`,
-											'GifAutoPlay original',
-											key,
-											String(result),
-										)
-										return false
-									}),
-								)
-							} catch {}
-						}
-					} catch {}
-				},
-				{ returnNamespace: true },
-			),
-		)
-
-		let hooksInstalled = false
-
-		function installGifItemHook(): void {
-			if (hooksInstalled) return
-			try {
-				getModules(
-					gifPickerItemFilter(),
-					(exports: unknown) => {
-						try {
-							if (hooksInstalled) return
-							const found: ElementType[] = []
-							findNamed(exports, GIF_ITEM_NAME, found)
-							if (found.length === 0) return
-							hooksInstalled = true
-
-							let autoplayPatched = false
-							for (const component of found) {
-								try {
-									const unpatch = afterJSX(component as never, element => {
-										try {
-											if (!autoplayPatched) {
-												autoplayPatched = true
-												patchAutoplayFunctions()
-											}
-											return freezeItem(
-												element as ReactElement<Record<string, any>>,
-											)
-										} catch {
-											return element
-										}
-									})
-									cleanup(unpatch)
-									logOnce('gifitem:hook', 'installed GIF item hook')
-								} catch {}
-							}
-						} catch {}
-					},
-					{ returnNamespace: true },
-				)
-			} catch {}
-		}
-
-		installGifItemHook()
+		installGifAutoPlayPatch(cleanup)
 		patchAutoplayFunctions()
-
-		const timers = [1000, 4000, 10000].map(delay =>
-			setTimeout(() => {
-				try {
-					if (!hooksInstalled) installGifItemHook()
-					if (!patchedFunctions.size) patchAutoplayFunctions()
-				} catch {}
-			}, delay),
-		)
-		cleanup(() => timers.forEach(clearTimeout))
+		installOneShotGifTrigger(cleanup)
 	},
 })
