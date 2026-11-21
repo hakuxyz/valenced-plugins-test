@@ -125,8 +125,14 @@ function patchAutoplayFunctions(): void {
 const GIF_ITEM_NAME = 'GIFPickerItemView'
 
 function matchesName(value: unknown, name: string): boolean {
-	if (typeof value !== 'function') return false
-	return value.name === name || (value as any).displayName === name
+	if (typeof value === 'function') {
+		return value.name === name || (value as any).displayName === name
+	}
+	if (!isRecord(value)) return false
+	return (
+		value.displayName === name ||
+		(value.type ? matchesName(value.type, name) : false)
+	)
 }
 
 function findNamed(
@@ -218,33 +224,47 @@ export default plugin({
 		)
 
 		let hooksInstalled = false
-		cleanup(
-			getModules(
-				gifPickerItemFilter(),
-				(exports: unknown) => {
-					if (hooksInstalled) return
-					const found: ElementType[] = []
-					findNamed(exports, GIF_ITEM_NAME, found)
-					if (found.length === 0) return
-					hooksInstalled = true
 
-					let autoplayPatched = false
-					for (const component of found) {
-						try {
-							const unpatch = afterJSX(component as never, element => {
-								if (!autoplayPatched) {
-									autoplayPatched = true
-									patchAutoplayFunctions()
-								}
-								return freezeItem(element as ReactElement<Record<string, any>>)
-							})
-							cleanup(unpatch)
-							logOnce('gifitem:hook', 'installed GIF item hook')
-						} catch {}
-					}
-				},
-				{ returnNamespace: true },
-			),
-		)
+		function installGifItemHook(): void {
+			if (hooksInstalled) return
+			try {
+				getModules(
+					gifPickerItemFilter(),
+					(exports: unknown) => {
+						if (hooksInstalled) return
+						const found: ElementType[] = []
+						findNamed(exports, GIF_ITEM_NAME, found)
+						if (found.length === 0) return
+						hooksInstalled = true
+
+						let autoplayPatched = false
+						for (const component of found) {
+							try {
+								const unpatch = afterJSX(component as never, element => {
+									if (!autoplayPatched) {
+										autoplayPatched = true
+										patchAutoplayFunctions()
+									}
+									return freezeItem(
+										element as ReactElement<Record<string, any>>,
+									)
+								})
+								cleanup(unpatch)
+								logOnce('gifitem:hook', 'installed GIF item hook')
+							} catch {}
+						}
+					},
+					{ returnNamespace: true },
+				)
+			} catch {}
+		}
+
+		installGifItemHook()
+
+		const retry = setInterval(() => {
+			installGifItemHook()
+			patchAutoplayFunctions()
+		}, 3000)
+		cleanup(() => clearInterval(retry))
 	},
 })
