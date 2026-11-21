@@ -21,11 +21,17 @@ export interface BurstColorPalette {
 	accentColor: string
 	highlightColor: string
 	opacity: number
+	BACKGROUND_COLOR?: string
+	ACCENT_COLOR?: string
+	HIGHLIGHT_COLOR?: string
+	OPACITY?: number
 }
 
 export interface ThemedBurstColors {
 	light: BurstColorPalette
 	dark: BurstColorPalette
+	LIGHT?: BurstColorPalette
+	DARK?: BurstColorPalette
 }
 
 export interface ReactionData {
@@ -95,9 +101,16 @@ const RED_PALETTE: BurstColorPalette = {
 	accentColor: '#9E9E9E',
 	highlightColor: '#FF4B4B',
 	opacity: 1,
+	BACKGROUND_COLOR: '#FF4B4B',
+	ACCENT_COLOR: '#9E9E9E',
+	HIGHLIGHT_COLOR: '#FF4B4B',
+	OPACITY: 1,
 }
 
+// Current Discord serializes these fields in caps; older ones used lowercase.
 export const DeletedBurstColors: ThemedBurstColors = {
 	light: RED_PALETTE,
 	dark: RED_PALETTE,
+	LIGHT: RED_PALETTE,
+	DARK: RED_PALETTE,
 }

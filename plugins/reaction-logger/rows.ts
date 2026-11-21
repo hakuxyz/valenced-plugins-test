@@ -32,6 +32,8 @@ function styleDeleted(reaction: ReactionData): ReactionData {
 	const colors = {
 		light: { ...DeletedBurstColors.light },
 		dark: { ...DeletedBurstColors.dark },
+		LIGHT: { ...DeletedBurstColors.light },
+		DARK: { ...DeletedBurstColors.dark },
 	}
 
 	return {

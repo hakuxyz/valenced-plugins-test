@@ -4,7 +4,7 @@
 	"name": "Reaction Logger",
 	"description": "Keep deleted reactions visible and highlight them in red.",
 	"author": "hakuxyz (https://github.com/hakuxyz \"GitHub\")",
-	"version": "1.0.0",
+	"version": "1.0.1",
 	"icon": "ReactionIcon",
 	"dependencies": {
 		"valenced.api": {
