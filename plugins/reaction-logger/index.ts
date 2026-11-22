@@ -14,12 +14,21 @@ function debugStores(): void {
 		'getUsersForReaction',
 		'getUser',
 	]) {
-		const found = lookupModule(withProps(props)) as unknown
-		const keys =
-			found && Array.isArray(found)
-				? Object.keys(found[0] ?? {})
-				: Object.keys((found as object) ?? {})
-		console.log('[ReactionLogger] lookup', props, JSON.stringify(keys))
+		const result = lookupModule(withProps(props)) as unknown
+		const target = Array.isArray(result) ? result[0] : result
+		const proto = target ? Object.getPrototypeOf(target) : undefined
+		const protoKeys = proto ? Object.getOwnPropertyNames(proto) : []
+		const own = target ? Object.keys(target) : []
+		console.log(
+			'[ReactionLogger] lookup',
+			props,
+			'type=',
+			typeof target,
+			'own=',
+			JSON.stringify(own.slice(0, 8)),
+			'proto=',
+			JSON.stringify(protoKeys),
+		)
 	}
 }
 
