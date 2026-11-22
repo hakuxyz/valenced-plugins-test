@@ -37,6 +37,10 @@ export function recordMessage(
 	if (!seen) known.set(messageId, (seen = new Map()))
 
 	for (const reaction of reactions) {
+		console.log(
+			'[ReactionLogger] record',
+			JSON.stringify({ ...reaction, emoji: reaction.emoji }),
+		)
 		const normal = reaction.count ?? 0
 		const burst = reaction.burstCount ?? reaction.burst_count ?? 0
 		const key = `${messageId}:${emojiKey(reaction.emoji)}`
@@ -130,6 +134,7 @@ export function interceptReactions() {
 		onFluxEventDispatched<ReactionAction>(
 			'MESSAGE_REACTION_REMOVE',
 			payload => {
+				console.log('[ReactionLogger] REMOVE', JSON.stringify(payload))
 				if (!payload.messageId) return payload
 				const type = payload.reactionType ?? 0
 				if (remember(payload.messageId, payload.emoji, type))
