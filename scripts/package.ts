@@ -31,16 +31,28 @@ for (const name of [...readdirSync('plugins')].sort()) {
 		throw new Error(`Missing ${bundlePath}. Run "bun run build" first.`)
 	}
 
-	const archive = zipSync(
-		{
-			'manifest.json': new Uint8Array(readFileSync(manifestPath)),
-			'index.js': new Uint8Array(readFileSync(bundlePath)),
-		},
-		{ mtime: FixedMtime },
-	)
+	const archive: Record<string, Uint8Array> = {
+		'manifest.json': new Uint8Array(readFileSync(manifestPath)),
+		'index.js': new Uint8Array(readFileSync(bundlePath)),
+	}
+
+	const assetsDir = join(pluginDir, 'assets')
+	if (existsSync(assetsDir)) {
+		const addAssets = (dir: string, prefix: string) => {
+			for (const entry of readdirSync(dir, { withFileTypes: true })) {
+				const path = join(dir, entry.name)
+				if (entry.isDirectory()) addAssets(path, `${prefix}${entry.name}/`)
+				else
+					archive[`${prefix}${entry.name}`] = new Uint8Array(readFileSync(path))
+			}
+		}
+		addAssets(assetsDir, 'assets/')
+	}
+
+	const zipped = zipSync(archive, { mtime: FixedMtime })
 	const fileName = `${manifest.id}@${manifest.version}.zip`
 
-	writeFileSync(join(PagesDir, fileName), archive)
+	writeFileSync(join(PagesDir, fileName), zipped)
 	count++
 	console.log(`Packed ${fileName}`)
 }
