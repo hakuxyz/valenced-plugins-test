@@ -1,28 +1,36 @@
-const PACKS: Record<string, string> = {
-	apple: 'Apple',
-	'apple-hd': 'Apple HD',
-	'apple-small': 'Apple Small',
-	'samsung-oneui': 'Samsung One UI',
-	noto: 'Noto',
-	facebook: 'Facebook',
-	joypixels: 'JoyPixels',
-	whatsapp: 'WhatsApp',
-	openmoji: 'OpenMoji',
-	tossface: 'Toss Face',
-	blobmoji: 'Blobmoji',
-}
+import { existsSync } from '@valenced/modules/native/fs'
+import { pluginStorageDirFor } from '@valenced/plugins/constants'
+import SettingsComponent from './settings'
+import { DefaultSettings, GroupId, PACKS } from './shared'
+import type { Settings } from './shared'
 
-export default plugin({
-	preInit({ themes }: any) {
-		themes.registerGroup('packs', {
-			name: 'Packs',
-			description: 'Emoji packs',
-		})
-
-		for (const [id, name] of Object.entries(PACKS))
-			themes.registerEmojiPack('packs', id, {
-				name,
-				images: `assets/emoji/${id}`,
-			})
+export default plugin<{ jsonStorage: Settings }>({
+	jsonStorage: {
+		load: true,
+		default: DefaultSettings,
 	},
+	preInit({ themes }: any) {
+		themes.registerGroup(GroupId, {
+			name: 'Packs',
+			description: 'Emoji packs, downloaded on demand from settings.',
+		})
+	},
+	async start(api) {
+		const { jsonStorage, plugin } = api as any
+		const settings = jsonStorage.cache ?? DefaultSettings
+		if (!settings.selected) return
+
+		const pack = PACKS.find(p => p.id === settings.selected)
+		if (!pack) return
+
+		// Only register a pack whose images have been downloaded to storage.
+		const packDir = `${pluginStorageDirFor(plugin.manifest.id)}/packs/${settings.selected}`
+		if (!existsSync(packDir)) return
+
+		;(api as any).themes.registerEmojiPack(GroupId, settings.selected, {
+			name: pack.name,
+			images: packDir,
+		})
+	},
+	SettingsComponent,
 })

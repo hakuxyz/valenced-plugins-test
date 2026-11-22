@@ -10,10 +10,12 @@ import { join } from 'node:path'
 import { zipSync } from 'fflate'
 
 const PagesDir = 'build/pages'
+const PacksDir = join(PagesDir, 'packs')
 const FixedMtime = new Date('2000-01-01T00:00:00Z')
 
 rmSync(PagesDir, { recursive: true, force: true })
 mkdirSync(PagesDir, { recursive: true })
+mkdirSync(PacksDir, { recursive: true })
 
 let count = 0
 
@@ -36,19 +38,6 @@ for (const name of [...readdirSync('plugins')].sort()) {
 		'index.js': new Uint8Array(readFileSync(bundlePath)),
 	}
 
-	const assetsDir = join(pluginDir, 'assets')
-	if (existsSync(assetsDir)) {
-		const addAssets = (dir: string, prefix: string) => {
-			for (const entry of readdirSync(dir, { withFileTypes: true })) {
-				const path = join(dir, entry.name)
-				if (entry.isDirectory()) addAssets(path, `${prefix}${entry.name}/`)
-				else
-					archive[`${prefix}${entry.name}`] = new Uint8Array(readFileSync(path))
-			}
-		}
-		addAssets(assetsDir, 'assets/')
-	}
-
 	const zipped = zipSync(archive, { mtime: FixedMtime })
 	const fileName = `${manifest.id}@${manifest.version}.zip`
 
@@ -57,4 +46,37 @@ for (const name of [...readdirSync('plugins')].sort()) {
 	console.log(`Packed ${fileName}`)
 }
 
-console.log(`Packed ${count} plugin(s) into ${PagesDir}`)
+// Emoji packs are downloaded on demand from plugin settings, not bundled in
+// the plugin ZIP. Each pack is a separate ZIP served from GitHub Pages.
+for (const name of [...readdirSync('plugins/themes/assets/emoji')].sort()) {
+	const packDir = join('plugins/themes/assets/emoji', name)
+	if (!existsSync(packDir)) continue
+
+	const archive: Record<string, Uint8Array> = {}
+	for (const entry of readdirSync(packDir)) {
+		const path = join(packDir, entry)
+		if (entry.endsWith('.png') || entry.endsWith('.txt'))
+			archive[entry] = new Uint8Array(readFileSync(path))
+	}
+
+	writeFileSync(
+		join(PacksDir, `${name}.zip`),
+		zipSync(archive, { mtime: FixedMtime }),
+	)
+	count++
+	console.log(`Packed pack ${name}.zip`)
+}
+
+// Metadata with each pack's download size, shown in plugin settings.
+const meta: Record<string, number> = {}
+for (const name of [...readdirSync('plugins/themes/assets/emoji')].sort()) {
+	const zipPath = join(PacksDir, `${name}.zip`)
+	if (existsSync(zipPath)) meta[name] = readFileSync(zipPath).length
+}
+writeFileSync(
+	join(PacksDir, 'meta.json'),
+	new Uint8Array(Buffer.from(JSON.stringify(meta))),
+)
+count++
+
+console.log(`Packed ${count} plugin/pack artifact(s) into ${PagesDir}`)
