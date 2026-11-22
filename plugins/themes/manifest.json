@@ -1,0 +1,23 @@
+{
+	"format": 1,
+	"id": "hakuxyz.themes",
+	"name": "Themes",
+	"description": "Selectable emoji packs for every supported Unicode emoji.",
+	"author": "hakuxyz (https://github.com/hakuxyz \"GitHub\")",
+	"version": "1.0.0",
+	"icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0OCIgaGVpZ2h0PSI0OCIgdmlld0JveD0iMCAwIDQ4IDQ4Ij48cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMCIgZmlsbD0iIzFmMjEzMSIvPjxjaXJjbGUgY3g9IjE3IiBjeT0iMTgiIHI9IjciIGZpbGw9IiNmZjVmNTciLz48Y2lyY2xlIGN4PSIzMSIgY3k9IjE4IiByPSI3IiBmaWxsPSIjZmViYzJlIi8+PGNpcmNsZSBjeD0iMjQiIGN5PSIzMSIgcj0iNyIgZmlsbD0iIzI4Yzg0MCIvPjxwYXRoIGQ9Ik0xNCAzNWM2IDQgMTQgNCAyMCAwIiBmaWxsPSJub25lIiBzdHJva2U9IiNmMGIyMzIiIHN0cm9rZS13aWR0aD0iMyIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+PC9zdmc+",
+	"dependencies": {
+		"valenced.api": {
+			"version": ">=1 <2"
+		},
+		"discord": {
+			"version": "*"
+		},
+		"valenced.api.themes": {
+			"version": "*"
+		}
+	},
+	"dist": {
+		"script": "index.js"
+	}
+}
