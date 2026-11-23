@@ -14,8 +14,7 @@
 			"version": "*"
 		},
 		"valenced.api.themes": {
-			"version": "*",
-			"optional": true
+			"version": "*"
 		}
 	},
 	"dist": {
