@@ -10,6 +10,7 @@ export default plugin<{ jsonStorage: Settings }>({
 		default: DefaultSettings,
 	},
 	preInit({ themes }: any) {
+		if (!themes) return
 		themes.registerGroup(GroupId, {
 			name: 'Packs',
 			description: 'Emoji packs, downloaded on demand from settings.',
@@ -17,6 +18,9 @@ export default plugin<{ jsonStorage: Settings }>({
 	},
 	async start(api) {
 		const { jsonStorage, plugin } = api as any
+		const themes = (api as any).themes
+		if (!themes) return
+
 		const settings = jsonStorage.cache ?? DefaultSettings
 		if (!settings.selected) return
 
@@ -27,7 +31,7 @@ export default plugin<{ jsonStorage: Settings }>({
 		const packDir = `${pluginStorageDirFor(plugin.manifest.id)}/packs/${settings.selected}`
 		if (!existsSync(packDir)) return
 
-		;(api as any).themes.registerEmojiPack(GroupId, settings.selected, {
+		themes.registerEmojiPack(GroupId, settings.selected, {
 			name: pack.name,
 			images: packDir,
 		})

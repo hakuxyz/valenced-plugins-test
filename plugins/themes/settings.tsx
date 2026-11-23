@@ -193,6 +193,18 @@ export default function SettingsComponent({ api }: Props) {
 
 	const activeCategory = CATEGORIES.find(c => c.id === openCategory)
 
+	if (!themes)
+		return (
+			<ScrollView keyboardShouldPersistTaps="handled">
+				<Page>
+					<Text variant="text-md/normal">
+						The Themes API is not available. Enable or install the Valenced
+						Themes API plugin to use emoji packs.
+					</Text>
+				</Page>
+			</ScrollView>
+		)
+
 	return (
 		<ScrollView keyboardShouldPersistTaps="handled">
 			<Page>
