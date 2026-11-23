@@ -5,8 +5,8 @@ import { reloadApp } from '@valenced/modules/native/app'
 import { pluginStorageDirFor } from '@valenced/plugins/constants'
 import { unzipSync } from 'fflate'
 import { useEffect, useState } from 'react'
-import { ScrollView, View } from 'react-native'
-import { DefaultSettings, GroupId, PACKS } from './shared'
+import { Image, ScrollView, View } from 'react-native'
+import { CATEGORIES, DefaultSettings, GroupId } from './shared'
 import type { PluginSettingsComponent } from '@valenced/plugins/types'
 import type { ComponentProps } from 'react'
 import type { Pack, Settings } from './shared'
@@ -16,10 +16,10 @@ type Props = ComponentProps<PluginSettingsComponent<{ jsonStorage: Settings }>>
 const PacksBaseUrl = 'https://hakuxyz.github.io/valenced-plugins-test/packs'
 const PacksMetaUrl = `${PacksBaseUrl}/meta.json`
 
-const { TableRowGroup, Text, Button } = Design
+const { TableRow, TableRowGroup, Text, Button } = Design
 
-/** Converts raw bytes to a human readable size. */
 function formatSize(bytes: number): string {
+	if (!bytes) return '...'
 	const units = ['B', 'KB', 'MB', 'GB']
 	let size = bytes
 	let unit = 0
@@ -37,28 +37,22 @@ function toBase64(bytes: Uint8Array): string {
 	return btoa(binary)
 }
 
-/** Runs `task` for each item, `concurrency` at a time. */
 async function concurrently<T>(
 	items: T[],
 	concurrency: number,
 	task: (item: T) => Promise<void>,
 ) {
 	let index = 0
-	const workers = () =>
-		Promise.all(
-			Array.from({ length: concurrency }, () => {
-				let item: T | undefined
-				return new Promise<void>(resolve => {
-					const next = () => {
-						item = items[index++]
-						if (item === undefined) return resolve()
-						task(item).then(next)
-					}
-					next()
-				})
-			}),
-		)
-	await workers()
+	await Promise.all(
+		Array.from({ length: concurrency }, () => {
+			const next = (): Promise<void> => {
+				const item = items[index++]
+				if (item === undefined) return Promise.resolve()
+				return task(item).then(next)
+			}
+			return next()
+		}),
+	)
 }
 
 export default function SettingsComponent({ api }: Props) {
@@ -95,8 +89,6 @@ export default function SettingsComponent({ api }: Props) {
 	const packDirOf = (id: string) =>
 		`${pluginStorageDirFor(manifestId)}/packs/${id}`
 
-	const isDownloaded = (id: string) => downloaded.has(id)
-
 	async function downloadPack(pack: Pack) {
 		const { id } = pack
 		setDownloading(prev => new Set([...prev, id]))
@@ -107,7 +99,6 @@ export default function SettingsComponent({ api }: Props) {
 
 			const bytes = new Uint8Array(await res.arrayBuffer())
 			const files = unzipSync(bytes)
-
 			const packDir = packDirOf(id)
 			const base = packDir.slice(documentsDir.length + 1)
 
@@ -131,17 +122,16 @@ export default function SettingsComponent({ api }: Props) {
 				images: packDir,
 			})
 
-			const next = {
+			await storage.set({
 				...settings,
 				selected: id,
 				downloaded: [...downloaded, id],
-			}
-			await storage.set(next)
+			})
 			await reloadApp()
 			setDownloading(prev => {
-				const nextSet = new Set(prev)
-				nextSet.delete(id)
-				return nextSet
+				const next = new Set(prev)
+				next.delete(id)
+				return next
 			})
 		} catch (e) {
 			setError(
@@ -150,9 +140,9 @@ export default function SettingsComponent({ api }: Props) {
 				}`,
 			)
 			setDownloading(prev => {
-				const nextSet = new Set(prev)
-				nextSet.delete(id)
-				return nextSet
+				const next = new Set(prev)
+				next.delete(id)
+				return next
 			})
 		}
 	}
@@ -161,9 +151,8 @@ export default function SettingsComponent({ api }: Props) {
 		<ScrollView keyboardShouldPersistTaps="handled">
 			<Page>
 				<Text variant="text-md/normal" style={{ marginBottom: 12 }}>
-					Choose an emoji pack. Packs are downloaded on demand and are not
-					included in the installed plugin ZIP. Changing packs requires an app
-					reload.
+					Choose an emoji pack. Packs are downloaded on demand. Changing packs
+					requires an app reload.
 				</Text>
 
 				{error && (
@@ -177,30 +166,46 @@ export default function SettingsComponent({ api }: Props) {
 					</View>
 				)}
 
-				<TableRowGroup title="Packs">
-					{PACKS.map(pack => {
-						const id = pack.id
-						const size = formatSize(sizes[id] ?? 0)
-						const done = isDownloaded(id)
-						return (
-							<TableRowGroup title={pack.name} key={id}>
-								<Text variant="text-xs/normal" style={{ marginBottom: 6 }}>
-									{size} {done ? 'downloaded' : 'download to install'}
-								</Text>
-								<Button
-									text={done ? 'Installed' : 'Download'}
-									onPress={() => downloadPack(pack)}
-									disabled={done || downloading.has(id)}
+				{CATEGORIES.map(category => (
+					<TableRowGroup key={category.id} title={category.name}>
+						<Text
+							variant="text-xs/normal"
+							style={{ paddingHorizontal: 16, paddingBottom: 8, opacity: 0.6 }}
+						>
+							{category.packs.length} pack
+							{category.packs.length === 1 ? '' : 's'}
+						</Text>
+						{category.packs.map(pack => {
+							const done = downloaded.has(pack.id)
+							const busy = downloading.has(pack.id)
+							const size = formatSize(sizes[pack.id] ?? 0)
+							return (
+								<TableRow
+									key={pack.id}
+									label={pack.name}
+									subLabel={`${size}${done ? ' - installed' : ''}`}
+									icon={
+										<Image
+											source={{
+												uri: `${PacksBaseUrl}/previews/${pack.id}.png`,
+											}}
+											style={{ width: 28, height: 28, borderRadius: 4 }}
+										/>
+									}
+									trailing={
+										<Button
+											size="sm"
+											variant={done ? 'secondary' : 'primary'}
+											text={done ? 'Installed' : busy ? '...' : 'Download'}
+											disabled={done || busy}
+											onPress={() => downloadPack(pack)}
+										/>
+									}
 								/>
-								{downloading.has(id) && (
-									<Text variant="text-xs/normal" style={{ marginTop: 4 }}>
-										Downloading...
-									</Text>
-								)}
-							</TableRowGroup>
-						)
-					})}
-				</TableRowGroup>
+							)
+						})}
+					</TableRowGroup>
+				))}
 			</Page>
 		</ScrollView>
 	)

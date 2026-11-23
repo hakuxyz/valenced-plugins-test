@@ -79,4 +79,13 @@ writeFileSync(
 )
 count++
 
+// Preview emoji image per pack, shown in settings before download.
+const previewsDir = join(PacksDir, 'previews')
+mkdirSync(previewsDir, { recursive: true })
+for (const name of [...readdirSync('plugins/themes/assets/emoji')].sort()) {
+	const src = join('plugins/themes/assets/emoji', name, 'emoji-1f600.png')
+	if (existsSync(src))
+		writeFileSync(join(previewsDir, `${name}.png`), readFileSync(src))
+}
+
 console.log(`Packed ${count} plugin/pack artifact(s) into ${PagesDir}`)
