@@ -1,7 +1,7 @@
 import Page from '@valenced/components/Page'
+import { AlertActionCreators } from '@valenced/discord/actions'
 import { Design } from '@valenced/discord/design'
-import { FileModule } from '@valenced/discord/native'
-import { reloadApp } from '@valenced/modules/native/app'
+import { BundleUpdaterManager, FileModule } from '@valenced/discord/native'
 import { pluginStorageDirFor } from '@valenced/plugins/constants'
 import { unzipSync } from 'fflate'
 import { useEffect, useState } from 'react'
@@ -15,8 +15,10 @@ type Props = ComponentProps<PluginSettingsComponent<{ jsonStorage: Settings }>>
 
 const PacksBaseUrl = 'https://hakuxyz.github.io/valenced-plugins-test/packs'
 const PacksMetaUrl = `${PacksBaseUrl}/meta.json`
+const ReloadAlertKey = 'ThemesReloadRequired'
 
-const { TableRow, TableRowGroup, Text, Button } = Design
+const { AlertActionButton, AlertModal, Button, TableRow, TableRowGroup, Text } =
+	Design as any
 
 function formatSize(bytes: number): string {
 	if (!bytes) return '...'
@@ -55,17 +57,51 @@ async function concurrently<T>(
 	)
 }
 
+function openReloadRequired() {
+	AlertActionCreators.openAlert(
+		ReloadAlertKey,
+		<AlertModal
+			title="Reload Required"
+			content={
+				<Text variant="text-md/medium" color="text-default">
+					The following plugins require a reload to apply changes:
+					{'\n'}
+					<Text variant="text-md/bold" color="text-default">
+						Themes
+					</Text>
+				</Text>
+			}
+			actions={
+				<>
+					<AlertActionButton
+						variant="destructive"
+						text="Reload"
+						onPress={() => BundleUpdaterManager.reload()}
+					/>
+					<AlertActionButton
+						variant="secondary"
+						text="Not now"
+						onPress={() => AlertActionCreators.dismissAlert(ReloadAlertKey)}
+					/>
+				</>
+			}
+		/>,
+	)
+}
+
 export default function SettingsComponent({ api }: Props) {
 	const { jsonStorage: storage } = api as any
 	const [sizes, setSizes] = useState<Record<string, number>>({})
 	const [downloading, setDownloading] = useState<Set<string>>(new Set())
 	const [error, setError] = useState<string | null>(null)
+	const [openCategory, setOpenCategory] = useState<string | null>(null)
 
 	const manifestId = (api as any).plugin.manifest.id
 	const themes = (api as any).themes
 	const documentsDir = FileModule.getConstants().DocumentsDirPath
 
 	const settings = storage.use() ?? DefaultSettings
+	const selected = settings.selected
 	const downloaded = new Set(settings.downloaded ?? [])
 
 	useEffect(() => {
@@ -88,6 +124,15 @@ export default function SettingsComponent({ api }: Props) {
 
 	const packDirOf = (id: string) =>
 		`${pluginStorageDirFor(manifestId)}/packs/${id}`
+
+	async function selectDownloadedPack(pack: Pack) {
+		themes.registerEmojiPack(GroupId, pack.id, {
+			name: pack.name,
+			images: packDirOf(pack.id),
+		})
+		await storage.set({ ...settings, selected: pack.id })
+		openReloadRequired()
+	}
 
 	async function downloadPack(pack: Pack) {
 		const { id } = pack
@@ -122,23 +167,22 @@ export default function SettingsComponent({ api }: Props) {
 				images: packDir,
 			})
 
+			const nextDownloaded = downloaded.has(id)
+				? settings.downloaded
+				: [...(settings.downloaded ?? []), id]
 			await storage.set({
 				...settings,
 				selected: id,
-				downloaded: [...downloaded, id],
+				downloaded: nextDownloaded,
 			})
-			await reloadApp()
-			setDownloading(prev => {
-				const next = new Set(prev)
-				next.delete(id)
-				return next
-			})
+			openReloadRequired()
 		} catch (e) {
 			setError(
 				`Failed to download ${pack.name}: ${
 					e instanceof Error ? e.message : String(e)
 				}`,
 			)
+		} finally {
 			setDownloading(prev => {
 				const next = new Set(prev)
 				next.delete(id)
@@ -147,65 +191,121 @@ export default function SettingsComponent({ api }: Props) {
 		}
 	}
 
+	const activeCategory = CATEGORIES.find(c => c.id === openCategory)
+
 	return (
 		<ScrollView keyboardShouldPersistTaps="handled">
 			<Page>
-				<Text variant="text-md/normal" style={{ marginBottom: 12 }}>
-					Choose an emoji pack. Packs are downloaded on demand. Changing packs
-					requires an app reload.
-				</Text>
-
-				{error && (
-					<View style={{ paddingHorizontal: 16, paddingBottom: 12 }}>
-						<Text
-							variant="text-xs/normal"
-							style={{ opacity: 0.6, color: '#ff4444' }}
-						>
-							{error}
+				{!activeCategory ? (
+					<>
+						<Text variant="text-md/normal" style={{ marginBottom: 12 }}>
+							Choose an emoji pack. Open a category to see its packs. Packs are
+							downloaded on demand.
 						</Text>
-					</View>
-				)}
 
-				{CATEGORIES.map(category => (
-					<TableRowGroup key={category.id} title={category.name}>
-						<Text
-							variant="text-xs/normal"
-							style={{ paddingHorizontal: 16, paddingBottom: 8, opacity: 0.6 }}
-						>
-							{category.packs.length} pack
-							{category.packs.length === 1 ? '' : 's'}
-						</Text>
-						{category.packs.map(pack => {
-							const done = downloaded.has(pack.id)
-							const busy = downloading.has(pack.id)
-							const size = formatSize(sizes[pack.id] ?? 0)
-							return (
+						{error && (
+							<View style={{ paddingHorizontal: 16, paddingBottom: 12 }}>
+								<Text
+									variant="text-xs/normal"
+									style={{ opacity: 0.6, color: '#ff4444' }}
+								>
+									{error}
+								</Text>
+							</View>
+						)}
+
+						<TableRowGroup title="Categories">
+							{CATEGORIES.map(category => (
 								<TableRow
-									key={pack.id}
-									label={pack.name}
-									subLabel={`${size}${done ? ' - installed' : ''}`}
-									icon={
-										<Image
-											source={{
-												uri: `${PacksBaseUrl}/previews/${pack.id}.png`,
-											}}
-											style={{ width: 28, height: 28, borderRadius: 4 }}
-										/>
-									}
-									trailing={
-										<Button
-											size="sm"
-											variant={done ? 'secondary' : 'primary'}
-											text={done ? 'Installed' : busy ? '...' : 'Download'}
-											disabled={done || busy}
-											onPress={() => downloadPack(pack)}
-										/>
-									}
+									key={category.id}
+									label={category.name}
+									subLabel={`${category.packs.length} pack${
+										category.packs.length === 1 ? '' : 's'
+									} - ${category.packs.map(p => p.name).join(', ')}`}
+									arrow
+									onPress={() => setOpenCategory(category.id)}
 								/>
-							)
-						})}
-					</TableRowGroup>
-				))}
+							))}
+						</TableRowGroup>
+					</>
+				) : (
+					<>
+						<Button
+							size="sm"
+							variant="secondary"
+							text="Back"
+							onPress={() => setOpenCategory(null)}
+						/>
+						<View style={{ height: 12 }} />
+
+						<Text variant="text-lg/semibold" style={{ marginBottom: 4 }}>
+							{activeCategory.name}
+						</Text>
+						<Text
+							variant="text-sm/normal"
+							style={{ marginBottom: 12, opacity: 0.7 }}
+						>
+							{activeCategory.packs.length} pack
+							{activeCategory.packs.length === 1 ? '' : 's'}
+						</Text>
+
+						{error && (
+							<View style={{ paddingBottom: 12 }}>
+								<Text
+									variant="text-xs/normal"
+									style={{ opacity: 0.6, color: '#ff4444' }}
+								>
+									{error}
+								</Text>
+							</View>
+						)}
+
+						<TableRowGroup title="Packs">
+							{activeCategory.packs.map(pack => {
+								const done = downloaded.has(pack.id)
+								const busy = downloading.has(pack.id)
+								const active = selected === pack.id
+								const size = formatSize(sizes[pack.id] ?? 0)
+								return (
+									<TableRow
+										key={pack.id}
+										label={pack.name}
+										subLabel={`${size}${
+											active ? ' - selected' : done ? ' - downloaded' : ''
+										}`}
+										icon={
+											<Image
+												source={{
+													uri: `${PacksBaseUrl}/previews/${pack.id}.png`,
+												}}
+												style={{ width: 28, height: 28, borderRadius: 4 }}
+											/>
+										}
+										trailing={
+											<Button
+												size="sm"
+												variant={active ? 'secondary' : 'primary'}
+												text={
+													active
+														? 'Selected'
+														: busy
+															? '...'
+															: done
+																? 'Use'
+																: 'Download'
+												}
+												disabled={active || busy}
+												onPress={() =>
+													done ? selectDownloadedPack(pack) : downloadPack(pack)
+												}
+											/>
+										}
+									/>
+								)
+							})}
+						</TableRowGroup>
+					</>
+				)}
 			</Page>
 		</ScrollView>
 	)
