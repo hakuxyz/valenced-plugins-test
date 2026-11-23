@@ -18,7 +18,7 @@ const PacksMetaUrl = `${PacksBaseUrl}/meta.json`
 const ReloadAlertKey = 'ThemesReloadRequired'
 
 const { AlertActionButton, AlertModal, Button, TableRow, TableRowGroup, Text } =
-	Design as any
+	Design
 
 function formatSize(bytes: number): string {
 	if (!bytes) return '...'
@@ -90,14 +90,14 @@ function openReloadRequired() {
 }
 
 export default function SettingsComponent({ api }: Props) {
-	const { jsonStorage: storage } = api as any
+	const { jsonStorage: storage, plugin } = api
+	// Decorated by the Themes API plugin; untyped because it is not in the SDK.
+	const themes = (api as any).themes
 	const [sizes, setSizes] = useState<Record<string, number>>({})
 	const [downloading, setDownloading] = useState<Set<string>>(new Set())
 	const [error, setError] = useState<string | null>(null)
 	const [openCategory, setOpenCategory] = useState<string | null>(null)
 
-	const manifestId = (api as any).plugin.manifest.id
-	const themes = (api as any).themes
 	const documentsDir = FileModule.getConstants().DocumentsDirPath
 
 	const settings = storage.use() ?? DefaultSettings
@@ -123,15 +123,23 @@ export default function SettingsComponent({ api }: Props) {
 	}, [])
 
 	const packDirOf = (id: string) =>
-		`${pluginStorageDirFor(manifestId)}/packs/${id}`
+		`${pluginStorageDirFor(plugin.manifest.id)}/packs/${id}`
 
 	async function selectDownloadedPack(pack: Pack) {
-		themes.registerEmojiPack(GroupId, pack.id, {
-			name: pack.name,
-			images: packDirOf(pack.id),
-		})
-		await storage.set({ ...settings, selected: pack.id })
-		openReloadRequired()
+		try {
+			themes.registerEmojiPack(GroupId, pack.id, {
+				name: pack.name,
+				images: packDirOf(pack.id),
+			})
+			await storage.set({ ...settings, selected: pack.id })
+			openReloadRequired()
+		} catch (e) {
+			setError(
+				`Failed to select ${pack.name}: ${
+					e instanceof Error ? e.message : String(e)
+				}`,
+			)
+		}
 	}
 
 	async function downloadPack(pack: Pack) {

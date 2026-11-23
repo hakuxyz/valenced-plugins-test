@@ -1,4 +1,3 @@
-import { existsSync } from '@valenced/modules/native/fs'
 import { pluginStorageDirFor } from '@valenced/plugins/constants'
 import SettingsComponent from './settings'
 import { DefaultSettings, GroupId, PACKS } from './shared'
@@ -9,32 +8,31 @@ export default plugin<{ jsonStorage: Settings }>({
 		load: true,
 		default: DefaultSettings,
 	},
-	preInit({ themes }: any) {
-		if (!themes) return
-		themes.registerGroup(GroupId, {
-			name: 'Packs',
-			description: 'Emoji packs, downloaded on demand from settings.',
-		})
-	},
-	async start(api) {
-		const { jsonStorage, plugin } = api as any
-		const themes = (api as any).themes
-		if (!themes) return
+	start(api) {
+		const { jsonStorage, plugin } = api
+		try {
+			const themes = (api as any).themes
+			if (!themes) return
 
-		const settings = jsonStorage.cache ?? DefaultSettings
-		if (!settings.selected) return
+			themes.registerGroup(GroupId, {
+				name: 'Packs',
+				description: 'Emoji packs, downloaded on demand from settings.',
+			})
 
-		const pack = PACKS.find(p => p.id === settings.selected)
-		if (!pack) return
+			const settings = { ...DefaultSettings, ...jsonStorage.cache }
+			const pack = PACKS.find(p => p.id === settings.selected)
+			// Only packs recorded as downloaded have images in storage, so the
+			// selection survives a reload without re-downloading.
+			if (!pack || !settings.downloaded.includes(pack.id)) return
 
-		// Only register a pack whose images have been downloaded to storage.
-		const packDir = `${pluginStorageDirFor(plugin.manifest.id)}/packs/${settings.selected}`
-		if (!existsSync(packDir)) return
-
-		themes.registerEmojiPack(GroupId, settings.selected, {
-			name: pack.name,
-			images: packDir,
-		})
+			themes.registerEmojiPack(GroupId, pack.id, {
+				name: pack.name,
+				images: `${pluginStorageDirFor(plugin.manifest.id)}/packs/${pack.id}`,
+			})
+		} catch (e) {
+			// reportError only logs, so a bad pack can never disable the plugin.
+			plugin.reportError(e)
+		}
 	},
 	SettingsComponent,
 })
