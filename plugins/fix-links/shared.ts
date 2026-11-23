@@ -203,6 +203,9 @@ export function matchesPlatform(host: string, key: PlatformKey): boolean {
 const URL_PATTERN = /\b(https?:\/\/)([^\s<>"'`]+)/gi
 const TRAILING_PUNCTUATION = /[.,;:!)\]}]+$/
 
+/** Platforms whose links only ever carry tracking query strings. */
+const STRIP_QUERY = new Set<PlatformKey>(['twitter', 'x'])
+
 export function rewriteContent(content: string, settings: Settings): string {
 	if (!settings.enabled || !content.includes('://')) return content
 
@@ -210,12 +213,12 @@ export function rewriteContent(content: string, settings: Settings): string {
 	if (active.length === 0) return content
 
 	const replacements = new Map<PlatformKey, Replacement>()
-	const knownFixedHosts = new Set<string>()
+	const fixedHosts = new Map<string, PlatformKey>()
 
 	for (const key of PLATFORM_KEYS) {
 		const info = PLATFORM_MAP[key]
 		try {
-			knownFixedHosts.add(new URL(`https://${info.defaultDomain}`).hostname)
+			fixedHosts.set(new URL(`https://${info.defaultDomain}`).hostname, key)
 		} catch {}
 
 		const replacement = normalizeReplacement(
@@ -224,11 +227,19 @@ export function rewriteContent(content: string, settings: Settings): string {
 		)
 		if (!replacement) continue
 
-		knownFixedHosts.add(replacement.host)
+		fixedHosts.set(replacement.host, key)
 		if (settings.platforms[key]?.enabled) replacements.set(key, replacement)
 	}
 
+	// Community fixer we never rewrite, only clean.
+	fixedHosts.set('vxtwitter.com', 'twitter')
+
 	if (replacements.size === 0) return content
+
+	const cleaned = (url: URL, suffix: string): string => {
+		url.search = ''
+		return `${url}${suffix}`
+	}
 
 	return content.replace(URL_PATTERN, match => {
 		let candidate = match
@@ -249,7 +260,13 @@ export function rewriteContent(content: string, settings: Settings): string {
 		if (url.protocol !== 'http:' && url.protocol !== 'https:') return match
 
 		const host = url.hostname.toLowerCase().replace(/\.$/, '')
-		if (knownFixedHosts.has(host)) return match
+
+		const fixedKey = fixedHosts.get(host)
+		if (fixedKey !== undefined) {
+			return active.includes(fixedKey) && STRIP_QUERY.has(fixedKey)
+				? cleaned(url, suffix)
+				: match
+		}
 
 		const platform = active.find(key => matchesPlatform(host, key))
 		if (!platform) return match
@@ -257,6 +274,7 @@ export function rewriteContent(content: string, settings: Settings): string {
 		const replacement = replacements.get(platform)
 		if (!replacement) return match
 
+		const strip = STRIP_QUERY.has(platform)
 		let origin = replacement.origin
 		let targetHost = replacement.host
 
@@ -272,10 +290,11 @@ export function rewriteContent(content: string, settings: Settings): string {
 			}
 		}
 
-		if (targetHost === host) return match
+		if (targetHost === host) return strip ? cleaned(url, suffix) : match
 
 		const path =
 			url.pathname === '/' && replacement.prefix === '' ? '' : url.pathname
-		return `${origin}${replacement.prefix}${path}${url.search}${url.hash}${suffix}`
+		const query = strip ? url.hash : `${url.search}${url.hash}`
+		return `${origin}${replacement.prefix}${path}${query}${suffix}`
 	})
 }
