@@ -6,6 +6,7 @@ import { pluginStorageDirFor } from '@valenced/plugins/constants'
 import { unzipSync } from 'fflate'
 import { useEffect, useState } from 'react'
 import { Image, ScrollView } from 'react-native'
+import { writeEmojiSelection } from './native'
 import { CATEGORIES, DefaultSettings, GroupId, PreviewSample } from './shared'
 import type { PluginSettingsComponent } from '@valenced/plugins/types'
 import type { ComponentProps } from 'react'
@@ -136,6 +137,13 @@ export default function SettingsComponent({ api }: Props) {
 
 	const documentsDir = FileModule.getConstants().DocumentsDirPath
 
+	const selectionFor = (pack: Pack, images: string) => ({
+		plugin: plugin.manifest.id,
+		group: GroupId,
+		pack: pack.id,
+		images,
+	})
+
 	const settings = storage.use() ?? DefaultSettings
 	const selected = settings.selected
 	const downloaded = new Set(settings.downloaded ?? [])
@@ -163,10 +171,12 @@ export default function SettingsComponent({ api }: Props) {
 
 	async function selectDownloadedPack(pack: Pack) {
 		try {
+			const packDir = packDirOf(pack.id)
 			themes.registerEmojiPack(GroupId, pack.id, {
 				name: pack.name,
-				images: packDirOf(pack.id),
+				images: packDir,
 			})
+			await writeEmojiSelection(selectionFor(pack, packDir))
 			await storage.set({ ...settings, selected: pack.id })
 			openReloadRequired()
 		} catch (e) {
@@ -210,6 +220,7 @@ export default function SettingsComponent({ api }: Props) {
 				name: pack.name,
 				images: packDir,
 			})
+			await writeEmojiSelection(selectionFor(pack, packDir))
 
 			const nextDownloaded = downloaded.has(id)
 				? settings.downloaded
