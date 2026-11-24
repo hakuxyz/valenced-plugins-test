@@ -19,34 +19,44 @@ function methodNames(target: unknown): string[] {
 	]
 }
 
+function exportNames(target: unknown): string[] {
+	const names = methodNames(target)
+	return typeof target === 'function' ? [target.name, ...names] : names
+}
+
 function debugStores(): void {
 	const result = lookupModule(withProps('getUsers')) as unknown
 	const target = Array.isArray(result) ? result[0] : result
 	console.log('[ReactionLogger] userStore', JSON.stringify(methodNames(target)))
 
-	const filter = createFilterGenerator(
-		(_args, _id, exports) => {
-			try {
-				return methodNames(exports).some(name =>
-					name.toLowerCase().includes('reaction'),
-				)
-			} catch {
-				return false
-			}
-		},
-		() => 'reaction-methods',
-	)
+	for (const [label, pattern] of [
+		['reaction-users', /reaction.*user|user.*reaction/i],
+		['reaction-fns', /reaction/i],
+	] as const) {
+		const filter = createFilterGenerator(
+			(_args, _id, exports) => {
+				try {
+					return exportNames(exports).some(name => pattern.test(name))
+				} catch {
+					return false
+				}
+			},
+			() => label,
+		)
 
-	getModules(
-		filter(),
-		exports => {
-			const names = methodNames(exports).filter(name =>
-				name.toLowerCase().includes('reaction'),
-			)
-			console.log('[ReactionLogger] reactionModule', JSON.stringify(names))
-		},
-		{ max: 20 },
-	)
+		getModules(
+			filter(),
+			exports => {
+				const names = exportNames(exports).filter(name => pattern.test(name))
+				console.log(
+					'[ReactionLogger] scan',
+					label,
+					JSON.stringify(names.slice(0, 16)),
+				)
+			},
+			{ max: 60 },
+		)
+	}
 }
 
 export default plugin({
