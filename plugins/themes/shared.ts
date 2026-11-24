@@ -9,8 +9,15 @@ export type Category = {
 	packs: Pack[]
 }
 
-/** Representative emoji used as preview image for each pack. */
-export const PreviewEmoji = 'emoji-1f600.png'
+/** Emoji shown as preview rows in settings, same sample as the official themes settings. */
+export const PreviewSample = [
+	'1f600',
+	'1f602',
+	'1f44d',
+	'1f389',
+	'1f525',
+	'1f97a',
+]
 
 export const CATEGORIES: Category[] = [
 	{

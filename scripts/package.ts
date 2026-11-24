@@ -8,6 +8,7 @@ import {
 } from 'node:fs'
 import { join } from 'node:path'
 import { zipSync } from 'fflate'
+import { PreviewSample } from '../plugins/themes/shared'
 
 const PagesDir = 'build/pages'
 const PacksDir = join(PagesDir, 'packs')
@@ -79,13 +80,21 @@ writeFileSync(
 )
 count++
 
-// Preview emoji image per pack, shown in settings before download.
+// Sample emoji per pack, shown as preview rows in settings before download.
 const previewsDir = join(PacksDir, 'previews')
 mkdirSync(previewsDir, { recursive: true })
 for (const name of [...readdirSync('plugins/themes/assets/emoji')].sort()) {
-	const src = join('plugins/themes/assets/emoji', name, 'emoji-1f600.png')
-	if (existsSync(src))
-		writeFileSync(join(previewsDir, `${name}.png`), readFileSync(src))
+	const dir = join(previewsDir, name)
+	mkdirSync(dir, { recursive: true })
+	for (const codepoint of PreviewSample) {
+		const src = join(
+			'plugins/themes/assets/emoji',
+			name,
+			`emoji-${codepoint}.png`,
+		)
+		if (existsSync(src))
+			writeFileSync(join(dir, `${codepoint}.png`), readFileSync(src))
+	}
 }
 
 console.log(`Packed ${count} plugin/pack artifact(s) into ${PagesDir}`)

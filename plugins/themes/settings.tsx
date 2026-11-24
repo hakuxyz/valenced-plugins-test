@@ -5,8 +5,8 @@ import { BundleUpdaterManager, FileModule } from '@valenced/discord/native'
 import { pluginStorageDirFor } from '@valenced/plugins/constants'
 import { unzipSync } from 'fflate'
 import { useEffect, useState } from 'react'
-import { Image, ScrollView, View } from 'react-native'
-import { CATEGORIES, DefaultSettings, GroupId } from './shared'
+import { Image, ScrollView } from 'react-native'
+import { CATEGORIES, DefaultSettings, GroupId, PreviewSample } from './shared'
 import type { PluginSettingsComponent } from '@valenced/plugins/types'
 import type { ComponentProps } from 'react'
 import type { Pack, Settings } from './shared'
@@ -17,8 +17,15 @@ const PacksBaseUrl = 'https://hakuxyz.github.io/valenced-plugins-test/packs'
 const PacksMetaUrl = `${PacksBaseUrl}/meta.json`
 const ReloadAlertKey = 'ThemesReloadRequired'
 
-const { AlertActionButton, AlertModal, Button, TableRow, TableRowGroup, Text } =
-	Design
+const {
+	AlertActionButton,
+	AlertModal,
+	Button,
+	Stack,
+	TableRow,
+	TableRowGroup,
+	Text,
+} = Design
 
 function formatSize(bytes: number): string {
 	if (!bytes) return '...'
@@ -54,6 +61,35 @@ async function concurrently<T>(
 			}
 			return next()
 		}),
+	)
+}
+
+/** Single sample emoji used as a row icon. */
+function PreviewIcon({ packId }: { packId: string }) {
+	return (
+		<Image
+			source={{
+				uri: `${PacksBaseUrl}/previews/${packId}/${PreviewSample[0]}.png`,
+			}}
+			style={{ width: 28, height: 28, borderRadius: 4 }}
+		/>
+	)
+}
+
+/** The pack's sample emoji row, shown before download. */
+function PreviewStrip({ packId }: { packId: string }) {
+	return (
+		<Stack direction="horizontal" spacing={4} style={{ flexWrap: 'wrap' }}>
+			{PreviewSample.map(codepoint => (
+				<Image
+					key={codepoint}
+					source={{
+						uri: `${PacksBaseUrl}/previews/${packId}/${codepoint}.png`,
+					}}
+					style={{ width: 20, height: 20 }}
+				/>
+			))}
+		</Stack>
 	)
 }
 
@@ -200,6 +236,9 @@ export default function SettingsComponent({ api }: Props) {
 	}
 
 	const activeCategory = CATEGORIES.find(c => c.id === openCategory)
+	const inUse = CATEGORIES.flatMap(category =>
+		category.packs.map(pack => ({ pack, category })),
+	).find(entry => entry.pack.id === selected)
 
 	if (!themes)
 		return (
@@ -214,70 +253,35 @@ export default function SettingsComponent({ api }: Props) {
 		)
 
 	return (
-		<ScrollView keyboardShouldPersistTaps="handled">
+		<ScrollView
+			keyboardShouldPersistTaps="handled"
+			contentContainerStyle={{ paddingBottom: 24 }}
+		>
 			<Page>
-				{!activeCategory ? (
-					<>
-						<Text variant="text-md/normal" style={{ marginBottom: 12 }}>
-							Choose an emoji pack. Open a category to see its packs. Packs are
-							downloaded on demand.
-						</Text>
-
-						{error && (
-							<View style={{ paddingHorizontal: 16, paddingBottom: 12 }}>
-								<Text
-									variant="text-xs/normal"
-									style={{ opacity: 0.6, color: '#ff4444' }}
-								>
-									{error}
-								</Text>
-							</View>
-						)}
-
-						<TableRowGroup title="Categories">
-							{CATEGORIES.map(category => (
-								<TableRow
-									key={category.id}
-									label={category.name}
-									subLabel={`${category.packs.length} pack${
-										category.packs.length === 1 ? '' : 's'
-									} - ${category.packs.map(p => p.name).join(', ')}`}
-									arrow
-									onPress={() => setOpenCategory(category.id)}
-								/>
-							))}
-						</TableRowGroup>
-					</>
-				) : (
-					<>
+				{activeCategory ? (
+					<Stack spacing={24}>
 						<Button
 							size="sm"
 							variant="secondary"
 							text="Back"
 							onPress={() => setOpenCategory(null)}
 						/>
-						<View style={{ height: 12 }} />
 
-						<Text variant="text-lg/semibold" style={{ marginBottom: 4 }}>
-							{activeCategory.name}
-						</Text>
-						<Text
-							variant="text-sm/normal"
-							style={{ marginBottom: 12, opacity: 0.7 }}
-						>
-							{activeCategory.packs.length} pack
-							{activeCategory.packs.length === 1 ? '' : 's'}
-						</Text>
+						<Stack spacing={4}>
+							<Text variant="heading-lg/bold" color="text-strong">
+								{activeCategory.name}
+							</Text>
+							<Text variant="text-sm/normal" color="text-muted">
+								{`${activeCategory.packs.length} pack${
+									activeCategory.packs.length === 1 ? '' : 's'
+								} - previewed below`}
+							</Text>
+						</Stack>
 
 						{error && (
-							<View style={{ paddingBottom: 12 }}>
-								<Text
-									variant="text-xs/normal"
-									style={{ opacity: 0.6, color: '#ff4444' }}
-								>
-									{error}
-								</Text>
-							</View>
+							<Text variant="text-sm/normal" style={{ color: '#ff4444' }}>
+								{error}
+							</Text>
 						)}
 
 						<TableRowGroup title="Packs">
@@ -286,20 +290,22 @@ export default function SettingsComponent({ api }: Props) {
 								const busy = downloading.has(pack.id)
 								const active = selected === pack.id
 								const size = formatSize(sizes[pack.id] ?? 0)
+								const status = active
+									? ' - in use'
+									: done
+										? ' - on this phone'
+										: ''
 								return (
 									<TableRow
 										key={pack.id}
 										label={pack.name}
-										subLabel={`${size}${
-											active ? ' - selected' : done ? ' - downloaded' : ''
-										}`}
-										icon={
-											<Image
-												source={{
-													uri: `${PacksBaseUrl}/previews/${pack.id}.png`,
-												}}
-												style={{ width: 28, height: 28, borderRadius: 4 }}
-											/>
+										subLabel={
+											<Stack spacing={6}>
+												<Text variant="text-sm/normal" color="text-muted">
+													{`${size}${status}`}
+												</Text>
+												<PreviewStrip packId={pack.id} />
+											</Stack>
 										}
 										trailing={
 											<Button
@@ -324,7 +330,47 @@ export default function SettingsComponent({ api }: Props) {
 								)
 							})}
 						</TableRowGroup>
-					</>
+					</Stack>
+				) : (
+					<Stack spacing={24}>
+						{error && (
+							<Text variant="text-sm/normal" style={{ color: '#ff4444' }}>
+								{error}
+							</Text>
+						)}
+
+						{inUse && (
+							<TableRowGroup title="In use" hasIcons>
+								<TableRow
+									label={inUse.pack.name}
+									subLabel="Tap to browse its category"
+									icon={<PreviewIcon packId={inUse.pack.id} />}
+									arrow
+									onPress={() => setOpenCategory(inUse.category.id)}
+								/>
+							</TableRowGroup>
+						)}
+
+						<TableRowGroup title="Categories" hasIcons>
+							{CATEGORIES.map(category => (
+								<TableRow
+									key={category.id}
+									label={category.name}
+									subLabel={`${category.packs.length} pack${
+										category.packs.length === 1 ? '' : 's'
+									} - ${category.packs.map(pack => pack.name).join(', ')}`}
+									icon={<PreviewIcon packId={category.packs[0].id} />}
+									arrow
+									onPress={() => setOpenCategory(category.id)}
+								/>
+							))}
+						</TableRowGroup>
+
+						<Text variant="text-sm/normal" color="text-muted">
+							Packs are downloaded only when you pick one. The size is shown on
+							every row, with a preview of that pack's emoji.
+						</Text>
+					</Stack>
 				)}
 			</Page>
 		</ScrollView>
