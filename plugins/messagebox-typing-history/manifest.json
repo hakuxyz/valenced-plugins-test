@@ -4,7 +4,7 @@
 	"name": "Messagebox Typing History",
 	"description": "Undo and redo the text you typed in the message box, with buttons and gestures.",
 	"author": "hakuxyz (https://github.com/hakuxyz \"GitHub\")",
-	"version": "1.0.4",
+	"version": "1.0.5",
 	"icon": "UndoIcon",
 	"dependencies": {
 		"valenced.api": {

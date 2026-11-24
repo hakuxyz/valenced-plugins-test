@@ -1,5 +1,5 @@
 import { Stores } from '@valenced/discord/flux'
-import { ButtonPositions, DefaultSettings } from './shared'
+import { ButtonPositions, clampRaise, DefaultSettings } from './shared'
 import type { Settings } from './shared'
 
 interface History {
@@ -89,7 +89,12 @@ export function readDraft(channelId: string): unknown {
 
 export function currentSettings(): Settings {
 	try {
-		const merged: Settings = { ...DefaultSettings, ...settingsGetter() }
+		const stored = settingsGetter()
+		const merged: Settings = {
+			...DefaultSettings,
+			...stored,
+			raiseBy: clampRaise(stored.raiseBy ?? DefaultSettings.raiseBy),
+		}
 		if (!ButtonPositions.includes(merged.position))
 			merged.position = DefaultSettings.position
 		return merged

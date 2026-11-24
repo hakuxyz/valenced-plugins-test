@@ -1,6 +1,7 @@
 import { Design } from '@valenced/discord/design'
 import { useSyncExternalStore } from 'react'
 import { Pressable, StyleSheet, View } from 'react-native'
+import { pillTop } from './shared'
 import {
 	canRedo,
 	canUndo,
@@ -103,7 +104,7 @@ function positionStyle(position: ButtonPosition, metrics: Metrics): ViewStyle {
 /** Snapshot is a string so React can compare it by value. */
 function snapshot(channelId: string) {
 	const settings = currentSettings()
-	return `${settings.buttons ? 1 : 0}${settings.gestures ? 1 : 0}${settings.size}${settings.pillVisibility}${settings.position}${canUndo(channelId) ? 1 : 0}${canRedo(channelId) ? 1 : 0}`
+	return `${settings.buttons ? 1 : 0}${settings.gestures ? 1 : 0}${settings.size}${settings.pillVisibility}${settings.position}${settings.raiseBy}${canUndo(channelId) ? 1 : 0}${canRedo(channelId) ? 1 : 0}`
 }
 
 function Button({
@@ -185,7 +186,7 @@ export default function TypingHistoryPill({ channelId }: Props) {
 				styles.pill,
 				positionStyle(settings.position, metrics),
 				{
-					top: -(metrics.height + metrics.padV * 2 + GAP),
+					top: pillTop(metrics.height, metrics.padV, GAP, settings.raiseBy),
 					borderRadius: metrics.radius,
 					paddingHorizontal: metrics.padH,
 					paddingVertical: metrics.padV,

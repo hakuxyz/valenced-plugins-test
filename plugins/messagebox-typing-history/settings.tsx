@@ -1,13 +1,19 @@
 import Page from '@valenced/components/Page'
 import { Design } from '@valenced/discord/design'
-import { ScrollView } from 'react-native'
-import { DefaultSettings } from './shared'
+import { ScrollView, View } from 'react-native'
+import { clampRaise, DefaultSettings, RAISE_LIMIT } from './shared'
 import type { PluginSettingsComponent } from '@valenced/plugins/types'
 import type { ComponentProps } from 'react'
 import type { Settings } from './shared'
 
-const { TableRadioGroup, TableRadioRow, TableSwitchRow, TableRowGroup, Text } =
-	Design
+const {
+	TableRadioGroup,
+	TableRadioRow,
+	TableSwitchRow,
+	TableRowGroup,
+	Text,
+	TextInput,
+} = Design
 
 type Props = ComponentProps<PluginSettingsComponent<{ jsonStorage: Settings }>>
 
@@ -68,6 +74,25 @@ export default function SettingsComponent({
 					<TableRadioRow label="Center" value="center" />
 					<TableRadioRow label="Left" value="left" />
 				</TableRadioGroup>
+
+				<TableRowGroup title="Height">
+					<TextInput
+						label="Raise above the message box (px)"
+						placeholder="0"
+						value={String(settings.raiseBy)}
+						onChange={value =>
+							storage.set({
+								raiseBy: clampRaise(Number(value.replace(/[^0-9]/g, '')) || 0),
+							})
+						}
+					/>
+					<View style={{ paddingHorizontal: 16, paddingBottom: 12 }}>
+						<Text variant="text-xs/normal" style={{ opacity: 0.6 }}>
+							0 sits directly above the message box. Higher values move the
+							buttons further up, up to {RAISE_LIMIT} px.
+						</Text>
+					</View>
+				</TableRowGroup>
 			</Page>
 		</ScrollView>
 	)
