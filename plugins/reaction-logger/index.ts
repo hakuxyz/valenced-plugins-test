@@ -29,6 +29,22 @@ function debugStores(): void {
 	const target = Array.isArray(result) ? result[0] : result
 	console.log('[ReactionLogger] userStore', JSON.stringify(methodNames(target)))
 
+	const view = lookupModule(withProps('handleViewReactions')) as unknown
+	const viewTarget = Array.isArray(view) ? view[0] : view
+	console.log(
+		'[ReactionLogger] viewModule',
+		JSON.stringify(exportNames(viewTarget)),
+	)
+	for (const name of [
+		'handleViewReactions',
+		'handleViewPreviewReactions',
+		'handleRemoveAllReactions',
+	]) {
+		const fn = (viewTarget as Record<string, unknown> | undefined)?.[name]
+		if (typeof fn === 'function')
+			console.log('[ReactionLogger] fn', name, fn.toString().slice(0, 900))
+	}
+
 	for (const [label, pattern] of [
 		['reaction-users', /reaction.*user|user.*reaction/i],
 		['reaction-fns', /reaction/i],
