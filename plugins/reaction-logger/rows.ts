@@ -1,25 +1,12 @@
 import { processColor } from 'react-native'
-import { getDeletedReactions, reconcile, recordMessage } from './logger'
-import { emojiKey, ReactionType, reactionKey } from './shared'
-import type { MessageRow, ReactionData } from './shared'
+import { getDeletedReactions, recordMessage } from './logger'
+import { reactionKey } from './shared'
+import type { LoggedReaction, MessageRow, ReactionData } from './shared'
 
 /** Discord marks a regenerated row as changed before sending it to native. */
 const UpdateChangeType = 2
 const DeepRed = processColor('#8B0000')
-
-function presentTypes(
-	messageId: string,
-	reactions: ReactionData[],
-): Set<string> {
-	const present = new Set<string>()
-	for (const reaction of reactions) {
-		if ((reaction.count ?? 0) > 0)
-			present.add(reactionKey(messageId, reaction.emoji, ReactionType.Normal))
-		if ((reaction.burstCount ?? reaction.burst_count ?? 0) > 0)
-			present.add(reactionKey(messageId, reaction.emoji, ReactionType.Burst))
-	}
-	return present
-}
+let loggedRow = false
 
 function styleDeleted(reaction: ReactionData): ReactionData {
 	const styled: ReactionData = {
@@ -72,26 +59,44 @@ export function styleRow(row: MessageRow): MessageRow {
 
 	const reactions: ReactionData[] = message.reactions ?? []
 	recordMessage(id, message.channelId, reactions)
-	reconcile(id, reactions)
+
+	if (!loggedRow) {
+		loggedRow = true
+		console.log(
+			'[ReactionLogger] row',
+			JSON.stringify({
+				row: Object.keys(row),
+				message: Object.keys(message),
+				accessories: (row.accessories ?? []).map(a => Object.keys(a ?? {})),
+				reaction: reactions[0] ? Object.keys(reactions[0]) : [],
+			}),
+		)
+	}
 
 	const deleted = getDeletedReactions(id)
 	if (!deleted.length) return row
 
-	const present = presentTypes(id, reactions)
-	const restored: ReactionData[] = []
-	const restoredEmojis = new Set<string>()
-
+	const grouped = new Map<string, LoggedReaction & { count: number }>()
 	for (const entry of deleted) {
-		if (present.has(reactionKey(id, entry.reaction.emoji, entry.type))) continue
-
-		const emoji = emojiKey(entry.reaction.emoji)
-		if (restoredEmojis.has(emoji)) continue
-		restoredEmojis.add(emoji)
-
-		restored.push(styleDeleted(entry.reaction))
+		const key = reactionKey(id, entry.reaction.emoji, entry.type)
+		const group = grouped.get(key)
+		if (!group) {
+			grouped.set(key, { ...entry, count: 1 })
+			continue
+		}
+		group.count++
+		if (entry.deletedAt > group.deletedAt) {
+			group.deletedAt = entry.deletedAt
+			group.userId = entry.userId
+		}
 	}
 
-	if (!restored.length) return row
+	const restored: ReactionData[] = []
+	for (const group of grouped.values()) {
+		const reaction = styleDeleted(group.reaction)
+		reaction.count = group.count
+		restored.push(reaction)
+	}
 
 	message.reactions = [...reactions, ...restored]
 	row.changeType = UpdateChangeType

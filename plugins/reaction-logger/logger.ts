@@ -1,6 +1,6 @@
 import { Dispatcher } from '@valenced/discord/common/flux'
 import { onFluxEventDispatched } from '@valenced/discord/flux'
-import { emojiKey, ReactionType, reactionKey } from './shared'
+import { emojiKey, logKey, ReactionType, reactionKey } from './shared'
 import type {
 	LoggedReaction,
 	ReactionAction,
@@ -67,27 +67,28 @@ export function recordMessage(
 	}
 }
 
-/** Forget logs for reactions that came back. */
-export function reconcile(messageId: string, reactions: ReactionData[]): void {
+/** Forget one user's removal when that user reacts again. */
+function forget(
+	messageId: string,
+	emoji: ReactionEmoji | undefined,
+	type: number,
+	userId: string | undefined,
+): boolean {
+	if (!emoji) return false
 	const map = logs.get(messageId)
-	if (!map?.size) return
+	if (!map?.size) return false
 
-	const current = new Set<string>()
-	for (const reaction of reactions) {
-		if ((reaction.count ?? 0) > 0)
-			current.add(reactionKey(messageId, reaction.emoji, 0))
-		if ((reaction.burstCount ?? reaction.burst_count ?? 0) > 0)
-			current.add(reactionKey(messageId, reaction.emoji, 1))
-	}
-
-	for (const key of map.keys()) if (current.has(key)) map.delete(key)
+	let changed = map.delete(logKey(messageId, emoji, type, userId))
+	if (userId) changed = map.delete(logKey(messageId, emoji, type)) || changed
 	if (!map.size) logs.delete(messageId)
+	return changed
 }
 
 function remember(
 	messageId: string,
 	emoji: ReactionEmoji | undefined,
 	type: number,
+	userId?: string,
 ): boolean {
 	if (!emoji) return false
 	const key = reactionKey(messageId, emoji, type)
@@ -96,7 +97,12 @@ function remember(
 
 	let map = logs.get(messageId)
 	if (!map) logs.set(messageId, (map = new Map()))
-	map.set(key, { reaction: { ...reaction }, type, deletedAt: Date.now() })
+	map.set(logKey(messageId, emoji, type, userId), {
+		reaction: { ...reaction },
+		type,
+		deletedAt: Date.now(),
+		userId,
+	})
 	return true
 }
 
@@ -131,13 +137,26 @@ export function clearLogs(): void {
 
 export function interceptReactions() {
 	return [
+		onFluxEventDispatched<ReactionAction>('MESSAGE_REACTION_ADD', payload => {
+			if (!payload.messageId) return payload
+			if (
+				forget(
+					payload.messageId,
+					payload.emoji,
+					payload.reactionType ?? 0,
+					payload.userId,
+				)
+			)
+				rerender(payload.messageId)
+			return payload
+		}),
 		onFluxEventDispatched<ReactionAction>(
 			'MESSAGE_REACTION_REMOVE',
 			payload => {
 				console.log('[ReactionLogger] REMOVE', JSON.stringify(payload))
 				if (!payload.messageId) return payload
 				const type = payload.reactionType ?? 0
-				if (remember(payload.messageId, payload.emoji, type))
+				if (remember(payload.messageId, payload.emoji, type, payload.userId))
 					rerender(payload.messageId)
 				return payload
 			},
@@ -165,7 +184,7 @@ export function interceptReactions() {
 					if (!map.has(key))
 						map.set(key, {
 							reaction: { ...reaction },
-							type: key.endsWith(':1') ? 1 : 0,
+							type: key.split(':').at(-2) === '1' ? 1 : 0,
 							deletedAt: Date.now(),
 						})
 				}

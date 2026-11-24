@@ -33,6 +33,7 @@ export interface LoggedReaction {
 	reaction: ReactionData
 	type: number
 	deletedAt: number
+	userId?: string
 }
 
 export interface MessageRow {
@@ -78,4 +79,13 @@ export function reactionKey(
 	type = 0,
 ): string {
 	return `${messageId}:${emojiKey(emoji)}:${type}`
+}
+
+export function logKey(
+	messageId: string,
+	emoji: ReactionEmoji,
+	type = 0,
+	userId?: string,
+): string {
+	return `${reactionKey(messageId, emoji, type)}:${userId ?? ''}`
 }
