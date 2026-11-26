@@ -19,7 +19,8 @@ findGifPickerComponents(
 )
 check('ignores non-component GIF picker exports', ignored.length, 0)
 
-let selectedItem: unknown
+let selectedType: unknown
+let selectedIndex: unknown
 const favoriteTile = {
 	props: {
 		item: {
@@ -27,8 +28,9 @@ const favoriteTile = {
 			name: 'Favorites',
 			src: 'https://example.invalid/favorites.png',
 		},
-		onSelectCategory: (item: unknown) => {
-			selectedItem = item
+		onSelectCategory: (type: unknown, index: unknown) => {
+			selectedType = type
+			selectedIndex = index
 		},
 	},
 }
@@ -36,7 +38,8 @@ const tree = { props: { children: [favoriteTile] } }
 const select = findFavoriteCategorySelect(tree)
 check('finds the favorites category handler', typeof select, 'function')
 select?.()
-check('passes the favorites item', selectedItem, favoriteTile.props.item)
+check('passes the favorites type', selectedType, 'Favorites')
+check('passes the favorites index', selectedIndex, 0)
 
 check(
 	'ignores other categories',

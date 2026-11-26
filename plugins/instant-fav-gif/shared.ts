@@ -58,7 +58,7 @@ export function findFavoriteCategorySelect(
 			const name = item.name ?? item.type
 			if (typeof name === 'string' && FAVORITES_NAME.test(name.trim())) {
 				return () => {
-					props.onSelectCategory(item)
+					props.onSelectCategory(item.type, 0)
 				}
 			}
 		}
