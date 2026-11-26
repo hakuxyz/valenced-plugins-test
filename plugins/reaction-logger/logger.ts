@@ -25,6 +25,19 @@ export function getDeletedReactions(messageId: string): LoggedReaction[] {
 	return map ? [...map.values()] : []
 }
 
+/** Removers recorded for one emoji, newest last. */
+export function getRemovers(
+	messageId: string,
+	emoji: ReactionEmoji | undefined,
+	type: number,
+): LoggedReaction[] {
+	if (!emoji) return []
+	return getDeletedReactions(messageId).filter(
+		entry =>
+			entry.type === type && emojiKey(entry.reaction.emoji) === emojiKey(emoji),
+	)
+}
+
 /** Remember every reaction the row generator shows for a message. */
 export function recordMessage(
 	messageId: string,

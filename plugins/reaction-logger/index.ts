@@ -3,64 +3,33 @@ import {
 	lookupModule,
 	waitForModules,
 } from '@valenced/modules/finders'
-import {
-	createFilterGenerator,
-	withName,
-	withProps,
-} from '@valenced/modules/finders/filters'
+import { withName, withProps } from '@valenced/modules/finders/filters'
 import { after, instead } from '@valenced/patcher'
 import { getErrorStack } from '@valenced/utils/error'
-import { clearLogs, interceptReactions } from './logger'
+import { Alert } from 'react-native'
+import { clearLogs, getRemovers, interceptReactions } from './logger'
 import { styleRow } from './rows'
-import type { RowManager } from './shared'
+import type { ReactionEmoji, RowManager } from './shared'
 
-function methodNames(target: unknown): string[] {
-	if (!target || typeof target !== 'object') return []
-	const proto = Object.getPrototypeOf(target)
-	return [
-		...Object.keys(target),
-		...(proto ? Object.getOwnPropertyNames(proto) : []),
-	]
+interface ViewArgs {
+	messageId?: string
+	emoji?: ReactionEmoji
+	isSelectedBurst?: boolean
 }
 
-function exportNames(target: unknown): string[] {
-	const names = methodNames(target)
-	return typeof target === 'function' ? [target.name, ...names] : names
+interface UserStore {
+	getUser?: (
+		id: string,
+	) => { username?: string; globalName?: string } | undefined
 }
 
-function summarize(value: unknown): unknown {
-	if (value === null || typeof value !== 'object') return value
-	if (Array.isArray(value)) return value.map(summarize).slice(0, 8)
-	const out: Record<string, unknown> = {}
-	for (const [key, item] of Object.entries(value).slice(0, 20)) {
-		out[key] =
-			typeof item === 'object' && item !== null
-				? Object.keys(item).slice(0, 12)
-				: item
-	}
-	return out
-}
-
-function debugStores(cleanup: (...fns: Array<() => unknown>) => void): void {
-	const result = lookupModule(withProps('getUsers')) as unknown
-	const target = Array.isArray(result) ? result[0] : result
-	console.log('[ReactionLogger] userStore', JSON.stringify(methodNames(target)))
-
-	const view = lookupModule(withProps('handleViewReactions')) as unknown
-	const viewTarget = Array.isArray(view) ? view[0] : view
-	console.log(
-		'[ReactionLogger] viewModule',
-		JSON.stringify(exportNames(viewTarget)),
-	)
-	for (const name of [
-		'handleViewReactions',
-		'handleViewPreviewReactions',
-		'handleRemoveAllReactions',
-	]) {
-		const fn = (viewTarget as Record<string, unknown> | undefined)?.[name]
-		if (typeof fn === 'function')
-			console.log('[ReactionLogger] fn', name, fn.toString().slice(0, 900))
-	}
+function patchReactionView(
+	cleanup: (...fns: Array<() => unknown>) => void,
+): void {
+	const found = lookupModule(withProps('getUsers')) as unknown
+	const store = (Array.isArray(found) ? found[0] : found) as
+		| UserStore
+		| undefined
 
 	cleanup(
 		waitForModules(withProps('handleViewReactions'), exports => {
@@ -68,67 +37,36 @@ function debugStores(cleanup: (...fns: Array<() => unknown>) => void): void {
 				instead(
 					exports as Record<
 						'handleViewReactions',
-						(...a: unknown[]) => unknown
+						(...args: unknown[]) => unknown
 					>,
 					'handleViewReactions',
 					(args, original) => {
-						console.log(
-							'[ReactionLogger] view args',
-							JSON.stringify(args.map(summarize)),
-						)
-						console.log(
-							'[ReactionLogger] view source',
-							original.toString().slice(0, 1400),
-						)
+						const options = args[0] as ViewArgs | undefined
+						if (options?.messageId && options.emoji) {
+							const entry = getRemovers(
+								options.messageId,
+								options.emoji,
+								options.isSelectedBurst ? 1 : 0,
+							).at(-1)
+							const id = entry?.userId
+							if (id) {
+								const user = store?.getUser?.(id)
+								Alert.alert(
+									'Reaction removed',
+									`Removed by ${user?.globalName ?? user?.username ?? id}`,
+								)
+							}
+						}
 						return original(...args)
 					},
 				),
 			)
 		}),
 	)
-
-	const content = lookupModule(withName('MessageReactionsContent')) as unknown
-	const contentTarget = Array.isArray(content) ? content[0] : content
-	if (typeof contentTarget === 'function')
-		console.log(
-			'[ReactionLogger] content',
-			contentTarget.toString().slice(0, 900),
-		)
-
-	for (const [label, pattern] of [
-		['reaction-users', /reaction.*user|user.*reaction/i],
-		['reaction-fns', /reaction/i],
-	] as const) {
-		const filter = createFilterGenerator(
-			(_args, _id, exports) => {
-				try {
-					return exportNames(exports).some(name => pattern.test(name))
-				} catch {
-					return false
-				}
-			},
-			() => label,
-		)
-
-		getModules(
-			filter(),
-			exports => {
-				const names = exportNames(exports).filter(name => pattern.test(name))
-				console.log(
-					'[ReactionLogger] scan',
-					label,
-					JSON.stringify(names.slice(0, 16)),
-				)
-			},
-			{ max: 60 },
-		)
-	}
 }
 
 export default plugin({
 	start({ cleanup, plugin }) {
-		console.log('[ReactionLogger] start')
-		debugStores(cleanup)
 		cleanup(
 			...interceptReactions(),
 			clearLogs,
@@ -148,5 +86,6 @@ export default plugin({
 				)
 			}),
 		)
+		patchReactionView(cleanup)
 	},
 })
