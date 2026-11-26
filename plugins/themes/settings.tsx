@@ -165,9 +165,7 @@ function openUninstallConfirm(pack: Pack, onConfirm: () => void) {
 					<AlertActionButton
 						variant="secondary"
 						text="Cancel"
-						onPress={() =>
-							AlertActionCreators.dismissAlert(UninstallAlertKey)
-						}
+						onPress={() => AlertActionCreators.dismissAlert(UninstallAlertKey)}
 					/>
 				</>
 			}
@@ -295,6 +293,29 @@ export default function SettingsComponent({ api }: Props) {
 		}
 	}
 
+	async function uninstallPack(pack: Pack) {
+		try {
+			await rm(packDirOf(pack.id))
+			const nextDownloaded = (settings.downloaded ?? []).filter(
+				id => id !== pack.id,
+			)
+			const nextSelected = selected === pack.id ? null : selected
+			await storage.set({
+				...settings,
+				downloaded: nextDownloaded,
+				selected: nextSelected,
+			})
+			if (nextSelected === null) await writeEmojiSelection(null)
+			openReloadRequired()
+		} catch (e) {
+			setError(
+				`Failed to uninstall ${pack.name}: ${
+					e instanceof Error ? e.message : String(e)
+				}`,
+			)
+		}
+	}
+
 	const activeCategory = CATEGORIES.find(c => c.id === openCategory)
 	const inUse = CATEGORIES.flatMap(category =>
 		category.packs.map(pack => ({ pack, category })),
@@ -356,37 +377,92 @@ export default function SettingsComponent({ api }: Props) {
 										? ' - on this phone'
 										: ''
 								return (
-									<TableRow
+									<ContextMenu
 										key={pack.id}
-										label={pack.name}
-										subLabel={
-											<Stack spacing={6}>
-												<Text variant="text-sm/normal" color="text-muted">
-													{`${size}${status}`}
-												</Text>
-												<PreviewStrip packId={pack.id} />
-											</Stack>
-										}
-										trailing={
-											<Button
-												size="sm"
-												variant={active ? 'secondary' : 'primary'}
-												text={
-													active
-														? 'Selected'
-														: busy
-															? '...'
-															: done
-																? 'Use'
-																: 'Download'
+										title={pack.name}
+										triggerOnLongPress
+										items={[
+											done
+												? {
+														label: active ? 'Selected' : 'Use',
+														IconComponent: UseIcon,
+														action: () => {
+															if (!active) void selectDownloadedPack(pack)
+														},
+													}
+												: {
+														label: 'Download',
+														IconComponent: DownloadIcon,
+														action: () => void downloadPack(pack),
+													},
+											...(done
+												? [
+														{
+															label: 'Reload',
+															IconComponent: ReloadIcon,
+															action: () => void downloadPack(pack),
+														},
+													]
+												: []),
+											...(done
+												? [
+														{
+															label: 'Uninstall',
+															IconComponent: UninstallIcon,
+															variant: 'destructive' as const,
+															action: () =>
+																openUninstallConfirm(
+																	pack,
+																	() => void uninstallPack(pack),
+																),
+														},
+													]
+												: []),
+										]}
+									>
+										{props => (
+											<TableRow
+												{...{ onLongPress: props.onLongPress }}
+												label={pack.name}
+												subLabel={
+													<Stack spacing={6}>
+														<Text variant="text-sm/normal" color="text-muted">
+															{`${size}${status}`}
+														</Text>
+														<PreviewStrip packId={pack.id} />
+													</Stack>
 												}
-												disabled={active || busy}
-												onPress={() =>
-													done ? selectDownloadedPack(pack) : downloadPack(pack)
+												trailing={
+													<Button
+														size="sm"
+														variant={active ? 'secondary' : 'primary'}
+														text={
+															active
+																? 'Selected'
+																: busy
+																	? '...'
+																	: done
+																		? 'Use'
+																		: 'Download'
+														}
+														disabled={active || busy}
+														onPress={() =>
+															done
+																? selectDownloadedPack(pack)
+																: downloadPack(pack)
+														}
+													/>
 												}
+												disabled={busy}
+												onPress={event => {
+													if (props.onPress) props.onPress(event)
+													else if (done && !active)
+														void selectDownloadedPack(pack)
+													else if (!done) void downloadPack(pack)
+												}}
 											/>
-										}
-									/>
+										)}
+									</ContextMenu>
 								)
 							})}
 						</TableRowGroup>
