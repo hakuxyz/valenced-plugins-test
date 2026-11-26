@@ -1,0 +1,20 @@
+{
+	"format": 1,
+	"id": "hakuxyz.instant-fav-gif",
+	"name": "Instant Favorite GIFs",
+	"description": "Open the GIF picker directly on your favorite GIFs.",
+	"author": "hakuxyz (https://github.com/hakuxyz \"GitHub\")",
+	"version": "1.0.0",
+	"icon": "GifIcon",
+	"dependencies": {
+		"valenced.api": {
+			"version": ">=1 <2"
+		},
+		"discord": {
+			"version": "*"
+		}
+	},
+	"dist": {
+		"script": "index.js"
+	}
+}
