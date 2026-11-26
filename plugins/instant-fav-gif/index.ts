@@ -1,10 +1,10 @@
-import { onFluxEventDispatched } from '@valenced/discord/flux'
 import { getModules } from '@valenced/modules/finders'
 import {
 	createFilterGenerator,
 	FilterScopes,
 } from '@valenced/modules/finders/filters'
 import { afterJSX } from '@valenced/react/jsx-runtime'
+import { createElement, useRef } from 'react'
 import { findFavoriteCategorySelect, findGifPickerComponents } from './shared'
 
 const pickerFilter = createFilterGenerator<[]>(
@@ -18,14 +18,29 @@ const pickerFilter = createFilterGenerator<[]>(
 )
 
 const hooked = new Set<unknown>()
-let selected = false
-let selectedAt = 0
+const wrappers = new Map<unknown, any>()
+let sessionSelected = false
+
+function sessionWrapper(original: any): any {
+	const cached = wrappers.get(original)
+	if (cached) return cached
+	const SessionPicker = (props: any) => {
+		const mounted = useRef(false)
+		if (!mounted.current) {
+			mounted.current = true
+			sessionSelected = false
+			console.log('[instant-fav-gif] picker mounted')
+		}
+		return createElement(original, props)
+	}
+	wrappers.set(original, SessionPicker)
+	return SessionPicker
+}
 
 function selectFavoritesOnce(element: any): any {
 	const select = findFavoriteCategorySelect(element)
-	if (!select || selected) return element
-	selected = true
-	selectedAt = Date.now()
+	if (!select || sessionSelected) return element
+	sessionSelected = true
 	console.log('[instant-fav-gif] selected favorites')
 	setTimeout(() => {
 		try {
@@ -38,11 +53,6 @@ function selectFavoritesOnce(element: any): any {
 export default plugin({
 	start({ cleanup }) {
 		cleanup(
-			onFluxEventDispatched('EXPRESSION_PICKER_OPEN', () => {
-				if (Date.now() - selectedAt > 200) selected = false
-			}),
-		)
-		cleanup(
 			getModules(
 				pickerFilter(),
 				(exports: unknown) => {
@@ -52,7 +62,18 @@ export default plugin({
 						if (hooked.has(component)) continue
 						hooked.add(component)
 						try {
-							cleanup(afterJSX(component as never, selectFavoritesOnce))
+							if (
+								typeof component === 'function' &&
+								component.name === 'GIFPicker'
+							) {
+								cleanup(
+									afterJSX(component as never, (element: any) =>
+										createElement(sessionWrapper(component), element.props),
+									),
+								)
+							} else {
+								cleanup(afterJSX(component as never, selectFavoritesOnce))
+							}
 						} catch {}
 					}
 				},
