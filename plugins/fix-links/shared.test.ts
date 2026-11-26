@@ -1,4 +1,4 @@
-import { DefaultSettings, rewriteContent } from './shared'
+import { DefaultSettings, mergeSettings, rewriteContent } from './shared'
 import type { Settings } from './shared'
 
 const settings: Settings = { ...DefaultSettings }
@@ -27,6 +27,27 @@ check(
 	'x drops query',
 	rewriteContent('https://x.com/user/status/2?t=abc', settings),
 	'https://fixupx.com/user/status/2',
+)
+
+check(
+	'instagram uses the new default',
+	rewriteContent('https://instagram.com/p/abc', settings),
+	'https://oginstagram.com/p/abc',
+)
+
+check(
+	'saved retired instagram domain migrates',
+	mergeSettings({
+		...DefaultSettings,
+		platforms: {
+			...DefaultSettings.platforms,
+			instagram: {
+				...DefaultSettings.platforms.instagram,
+				domain: 'ddinstagram.com',
+			},
+		},
+	}).platforms.instagram.domain,
+	'oginstagram.com',
 )
 
 check(

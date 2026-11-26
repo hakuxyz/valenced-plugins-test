@@ -59,7 +59,7 @@ export const PLATFORM_MAP: Record<PlatformKey, PlatformInfo> = {
 		key: 'instagram',
 		label: 'Instagram',
 		source: 'instagram.com links',
-		defaultDomain: 'ddinstagram.com',
+		defaultDomain: 'oginstagram.com',
 	},
 	reddit: {
 		key: 'reddit',
@@ -103,7 +103,7 @@ export const DefaultSettings: Settings = {
 		x: setting(true, 'fixupx.com'),
 		tiktok: setting(true, 'tnktok.com'),
 		bluesky: setting(true, 'fxbsky.app'),
-		instagram: setting(true, 'ddinstagram.com'),
+		instagram: setting(true, 'oginstagram.com'),
 		reddit: setting(true, 'redditez.com'),
 		threads: setting(false, 'fixthreads.net'),
 		pixiv: setting(false, 'phixiv.net'),
@@ -118,6 +118,11 @@ export function mergeSettings(value?: Partial<Settings> | null): Settings {
 	for (const key of PLATFORM_KEYS) {
 		const current = saved.platforms?.[key]
 		platforms[key] = { ...DefaultSettings.platforms[key], ...(current ?? {}) }
+		if (
+			key === 'instagram' &&
+			platforms[key].domain.trim() === 'ddinstagram.com'
+		)
+			platforms[key].domain = DefaultSettings.platforms.instagram.domain
 	}
 
 	return { ...DefaultSettings, ...saved, platforms }

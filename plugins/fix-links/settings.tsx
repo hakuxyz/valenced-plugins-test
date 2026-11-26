@@ -77,7 +77,7 @@ export default function SettingsComponent({
 							<TextInput
 								label="Replacement link"
 								placeholder={platform.defaultDomain}
-								value={current.domain}
+								defaultValue={current.domain}
 								status={invalid ? 'error' : 'default'}
 								errorMessage={
 									invalid
