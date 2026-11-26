@@ -1,21 +1,15 @@
-import {
-	describeElement,
-	findFavoritePress,
-	findGifPickerComponents,
-	findValuesByKey,
-	inspect,
-} from './shared'
+import { findFavoriteCategorySelect, findGifPickerComponents } from './shared'
 
 function check(name: string, actual: unknown, expected: unknown): void {
 	if (actual !== expected)
 		throw new Error(`${name}:\n  got  ${actual}\n  want ${expected}`)
 }
 
-const Target = Object.assign(function GIFPickerCategoryView() {}, {
-	displayName: 'GIFPickerCategoryView',
+const Picker = Object.assign(function GIFPicker() {}, {
+	displayName: 'GIFPicker',
 })
 const found: unknown[] = []
-findGifPickerComponents({ default: { nested: { Target } } }, found)
+findGifPickerComponents({ default: { nested: { Picker } } }, found)
 check('finds the mobile GIF picker component', found.length, 1)
 
 const ignored: unknown[] = []
@@ -25,71 +19,32 @@ findGifPickerComponents(
 )
 check('ignores non-component GIF picker exports', ignored.length, 0)
 
-let pressed = false
+let selectedItem: unknown
 const favoriteTile = {
 	props: {
-		accessibilityLabel: 'Category, Favorites',
-		onPress: () => {
-			pressed = true
+		item: {
+			type: 'Favorites',
+			name: 'Favorites',
+			src: 'https://example.invalid/favorites.png',
+		},
+		onSelectCategory: (item: unknown) => {
+			selectedItem = item
 		},
 	},
 }
-const press = findFavoritePress(favoriteTile)
-check('finds the favorites press handler', typeof press, 'function')
-press?.()
-check('press opens favorites', pressed, true)
-
-const nested = { props: { children: [favoriteTile] } }
-check(
-	'finds the press handler in children',
-	findFavoritePress(nested) !== undefined,
-	true,
-)
-
-check(
-	'ignores search favorites',
-	findFavoritePress({
-		props: {
-			accessibilityLabel: 'Search Favorites',
-			onPress: () => {},
-		},
-	}),
-	undefined,
-)
+const tree = { props: { children: [favoriteTile] } }
+const select = findFavoriteCategorySelect(tree)
+check('finds the favorites category handler', typeof select, 'function')
+select?.()
+check('passes the favorites item', selectedItem, favoriteTile.props.item)
 
 check(
 	'ignores other categories',
-	findFavoritePress({
+	findFavoriteCategorySelect({
 		props: {
-			accessibilityLabel: 'Category, Trending GIFs',
-			onPress: () => {},
+			item: { type: 'Trending GIFs', name: 'Trending GIFs' },
+			onSelectCategory: () => {},
 		},
 	}),
 	undefined,
 )
-
-check(
-	'describes the element for diagnostics',
-	describeElement(favoriteTile).includes('Category, Favorites'),
-	true,
-)
-
-const categoryTile = {
-	props: {
-		item: { id: 'favorites' },
-		onSelectCategory: () => {},
-	},
-}
-check(
-	'describes category item values',
-	describeElement(categoryTile).includes('item:{id:"favorites"}'),
-	true,
-)
-
-const values: unknown[] = []
-findValuesByKey(
-	{ nested: { GIFPickerResultTypes: { FAVORITES: 1 } } },
-	'GIFPickerResultTypes',
-	values,
-)
-check('finds result types by key', inspect(values[0]), '{FAVORITES:1}')

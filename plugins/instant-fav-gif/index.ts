@@ -1,28 +1,10 @@
-import { ToastActionCreators } from '@valenced/discord/actions'
 import { getModules } from '@valenced/modules/finders'
 import {
 	createFilterGenerator,
 	FilterScopes,
 } from '@valenced/modules/finders/filters'
 import { afterJSX } from '@valenced/react/jsx-runtime'
-import {
-	componentName,
-	describeElement,
-	findFavoritePress,
-	findGifPickerComponents,
-	findValuesByKey,
-	inspect,
-} from './shared'
-
-function toast(text: string): void {
-	console.log('[instant-fav-gif]', text)
-	try {
-		ToastActionCreators.open('HV_IFG', { text, duration: 3000 })
-	} catch {}
-}
-
-// shortcut: a 1s gap marks a new picker opening, replace if a real open event is exposed.
-const SESSION_GAP_MS = 1000
+import { findFavoriteCategorySelect, findGifPickerComponents } from './shared'
 
 const pickerFilter = createFilterGenerator<[]>(
 	(_args, _id, exports) => {
@@ -35,36 +17,23 @@ const pickerFilter = createFilterGenerator<[]>(
 )
 
 const hooked = new Set<unknown>()
-const dumped = new Set<string>()
-let reported = false
-let reportedTypes = false
-let lastCategoryViewAt = 0
-let openedFavorites = false
+let selected = false
 
-function makeOpenFavoritesOnce(name: string): (element: any) => any {
-	return (element: any): any => {
-		const now = Date.now()
-		if (now - lastCategoryViewAt > SESSION_GAP_MS) openedFavorites = false
-		lastCategoryViewAt = now
-		if (openedFavorites) return element
-
-		const onPress = findFavoritePress(element)
-		if (!onPress) {
-			if (!dumped.has(name)) {
-				dumped.add(name)
-				toast(`IFG dump ${name}: ${describeElement(element)}`)
-			}
-			return element
-		}
-		openedFavorites = true
-		toast('IFG favorites')
-		setTimeout(() => {
-			try {
-				onPress()
-			} catch {}
-		}, 0)
+function selectFavoritesOnce(element: any): any {
+	const select = findFavoriteCategorySelect(element)
+	if (!select) {
+		selected = false
 		return element
 	}
+	if (selected) return element
+	selected = true
+	console.log('[instant-fav-gif] selected favorites')
+	setTimeout(() => {
+		try {
+			select()
+		} catch {}
+	}, 0)
+	return element
 }
 
 export default plugin({
@@ -73,37 +42,14 @@ export default plugin({
 			getModules(
 				pickerFilter(),
 				(exports: unknown) => {
-					if (!reportedTypes) {
-						const types: unknown[] = []
-						const checks: unknown[] = []
-						findValuesByKey(exports, 'GIFPickerResultTypes', types)
-						findValuesByKey(exports, 'isFavoritesResultCurrent', checks)
-						if (types.length || checks.length) {
-							reportedTypes = true
-							toast(
-								`IFG types ${inspect(types[0])} | check ${inspect(checks[0])}`,
-							)
-						}
-					}
 					const found: unknown[] = []
 					findGifPickerComponents(exports, found)
-					let added = 0
 					for (const component of found) {
 						if (hooked.has(component)) continue
 						hooked.add(component)
-						added++
 						try {
-							cleanup(
-								afterJSX(
-									component as never,
-									makeOpenFavoritesOnce(componentName(component)),
-								),
-							)
+							cleanup(afterJSX(component as never, selectFavoritesOnce))
 						} catch {}
-					}
-					if (added > 0 && !reported) {
-						reported = true
-						toast(`IFG hooked ${componentName(found[0])}`)
 					}
 				},
 				{ returnNamespace: true },
