@@ -6,7 +6,7 @@ import { pluginStorageDirFor } from '@valenced/plugins/constants'
 import { lookupGeneratedIconComponent } from '@valenced/utils/discord'
 import { unzipSync } from 'fflate'
 import { useEffect, useState } from 'react'
-import { Image, ScrollView } from 'react-native'
+import { Image, Pressable, ScrollView } from 'react-native'
 import { writeEmojiSelection } from './native'
 import { CATEGORIES, DefaultSettings, GroupId, PreviewSample } from './shared'
 import type { PluginSettingsComponent } from '@valenced/plugins/types'
@@ -422,46 +422,46 @@ export default function SettingsComponent({ api }: Props) {
 										]}
 									>
 										{props => (
-											<TableRow
-												{...{ onLongPress: props.onLongPress }}
-												label={pack.name}
-												subLabel={
-													<Stack spacing={6}>
-														<Text variant="text-sm/normal" color="text-muted">
-															{`${size}${status}`}
-														</Text>
-														<PreviewStrip packId={pack.id} />
-													</Stack>
-												}
-												trailing={
-													<Button
-														size="sm"
-														variant={active ? 'secondary' : 'primary'}
-														text={
-															active
-																? 'Selected'
-																: busy
-																	? '...'
-																	: done
-																		? 'Use'
-																		: 'Download'
-														}
-														disabled={active || busy}
-														onPress={() =>
-															done
-																? selectDownloadedPack(pack)
-																: downloadPack(pack)
-														}
-													/>
-												}
-												disabled={busy}
-												onPress={event => {
-													if (props.onPress) props.onPress(event)
-													else if (done && !active)
-														void selectDownloadedPack(pack)
-													else if (!done) void downloadPack(pack)
-												}}
-											/>
+											<Pressable
+												onLongPress={props.onLongPress}
+												onPress={props.onPress}
+												onPressIn={props.onPressIn}
+												onPressOut={props.onPressOut}
+											>
+												<TableRow
+													label={pack.name}
+													subLabel={
+														<Stack spacing={6}>
+															<Text variant="text-sm/normal" color="text-muted">
+																{`${size}${status}`}
+															</Text>
+															<PreviewStrip packId={pack.id} />
+														</Stack>
+													}
+													trailing={
+														<Button
+															size="sm"
+															variant={active ? 'secondary' : 'primary'}
+															text={
+																active
+																	? 'Selected'
+																	: busy
+																		? '...'
+																		: done
+																			? 'Use'
+																			: 'Download'
+															}
+															disabled={active || busy}
+															onPress={() =>
+																done
+																	? selectDownloadedPack(pack)
+																	: downloadPack(pack)
+															}
+														/>
+													}
+													disabled={busy}
+												/>
+											</Pressable>
 										)}
 									</ContextMenu>
 								)
