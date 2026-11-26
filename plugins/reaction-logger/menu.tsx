@@ -93,36 +93,62 @@ function addRemovers(tree: unknown, names: string[]): void {
 	sheet.props.children = children
 }
 
-// The reaction sheet renders through one or more connected components first.
+function addIfFound(
+	tree: ReactElement,
+	names: string[],
+	onError: (error: unknown) => void,
+): boolean {
+	if (!findActionSheet(tree)) return false
+	try {
+		addRemovers(tree, names)
+	} catch (error) {
+		onError(error)
+	}
+	return true
+}
+
+function injectChildren(
+	tree: ReactElement,
+	names: string[],
+	onError: (error: unknown) => void,
+	depth: number,
+): ReactElement {
+	const props = tree.props as { children?: ReactNode } | undefined
+	const children = [props?.children]
+		.flat()
+		.filter(Boolean)
+		.map(child => inject(child as ReactElement, names, onError, depth))
+	return createElement(tree.type as FC<Record<string, unknown>>, {
+		...(tree.props as Record<string, unknown>),
+		children,
+		key: tree.key,
+	})
+}
+
+// The reaction sheet renders through connected components before the real sheet.
 function inject(
 	tree: ReactElement,
 	names: string[],
 	onError: (error: unknown) => void,
 	depth = 0,
 ): ReactElement {
-	if (findActionSheet(tree)) {
-		try {
-			addRemovers(tree, names)
-		} catch (error) {
-			onError(error)
-		}
-		return tree
-	}
-	if (depth >= 4 || !tree || typeof tree !== 'object') return tree
-	const Inner = tree.type as FC<Record<string, unknown>>
-	if (typeof Inner !== 'function') return tree
+	if (!tree || typeof tree !== 'object' || depth >= 6) return tree
+	if (addIfFound(tree, names, onError)) return tree
 
-	const Wrapped = (props: Record<string, unknown>) =>
-		inject(
-			Reflect.apply(Inner, undefined, [props]) as ReactElement,
-			names,
-			onError,
-			depth + 1,
-		)
-	return createElement(Wrapped, {
-		...(tree.props as Record<string, unknown>),
-		key: tree.key,
-	})
+	const Inner = tree.type as FC<Record<string, unknown>>
+	if (typeof Inner === 'function') {
+		const Wrapped = (props: Record<string, unknown>) => {
+			const inner = Reflect.apply(Inner, undefined, [props]) as ReactElement
+			if (addIfFound(inner, names, onError)) return inner
+			console.log('[ReactionLogger] descend', typeName(Inner))
+			return injectChildren(inner, names, onError, depth + 1)
+		}
+		return createElement(Wrapped, {
+			...(tree.props as Record<string, unknown>),
+			key: tree.key,
+		})
+	}
+	return injectChildren(tree, names, onError, depth + 1)
 }
 
 export function patchReactionActionSheet(
