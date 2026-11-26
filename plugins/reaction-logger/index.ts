@@ -1,4 +1,8 @@
-import { getModules, lookupModule } from '@valenced/modules/finders'
+import {
+	getModules,
+	lookupModule,
+	waitForModules,
+} from '@valenced/modules/finders'
 import {
 	createFilterGenerator,
 	withName,
@@ -59,7 +63,7 @@ function debugStores(cleanup: (...fns: Array<() => unknown>) => void): void {
 	}
 
 	cleanup(
-		getModules(withProps('handleViewReactions'), exports => {
+		waitForModules(withProps('handleViewReactions'), exports => {
 			cleanup(
 				instead(
 					exports as Record<
