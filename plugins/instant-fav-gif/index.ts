@@ -10,6 +10,8 @@ import {
 	describeElement,
 	findFavoritePress,
 	findGifPickerComponents,
+	findValuesByKey,
+	inspect,
 } from './shared'
 
 function toast(text: string): void {
@@ -35,6 +37,7 @@ const pickerFilter = createFilterGenerator<[]>(
 const hooked = new Set<unknown>()
 const dumped = new Set<string>()
 let reported = false
+let reportedTypes = false
 let lastCategoryViewAt = 0
 let openedFavorites = false
 
@@ -70,6 +73,18 @@ export default plugin({
 			getModules(
 				pickerFilter(),
 				(exports: unknown) => {
+					if (!reportedTypes) {
+						const types: unknown[] = []
+						const checks: unknown[] = []
+						findValuesByKey(exports, 'GIFPickerResultTypes', types)
+						findValuesByKey(exports, 'isFavoritesResultCurrent', checks)
+						if (types.length || checks.length) {
+							reportedTypes = true
+							toast(
+								`IFG types ${inspect(types[0])} | check ${inspect(checks[0])}`,
+							)
+						}
+					}
 					const found: unknown[] = []
 					findGifPickerComponents(exports, found)
 					let added = 0

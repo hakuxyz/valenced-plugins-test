@@ -2,6 +2,8 @@ import {
 	describeElement,
 	findFavoritePress,
 	findGifPickerComponents,
+	findValuesByKey,
+	inspect,
 } from './shared'
 
 function check(name: string, actual: unknown, expected: unknown): void {
@@ -71,3 +73,23 @@ check(
 	describeElement(favoriteTile).includes('Category, Favorites'),
 	true,
 )
+
+const categoryTile = {
+	props: {
+		item: { id: 'favorites' },
+		onSelectCategory: () => {},
+	},
+}
+check(
+	'describes category item values',
+	describeElement(categoryTile).includes('item:{id:"favorites"}'),
+	true,
+)
+
+const values: unknown[] = []
+findValuesByKey(
+	{ nested: { GIFPickerResultTypes: { FAVORITES: 1 } } },
+	'GIFPickerResultTypes',
+	values,
+)
+check('finds result types by key', inspect(values[0]), '{FAVORITES:1}')
