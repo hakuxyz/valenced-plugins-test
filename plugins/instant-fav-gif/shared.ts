@@ -4,45 +4,84 @@ export function isRecord(value: unknown): value is Record<string, any> {
 	)
 }
 
-function isGifPickerClass(value: unknown): boolean {
-	if (!isRecord(value) || typeof value !== 'function') return false
-	const proto = value.prototype
-	return (
-		isRecord(proto) &&
-		typeof proto.renderHeaderContent === 'function' &&
-		typeof proto.render === 'function'
-	)
+export function matchesName(value: unknown, name: string): boolean {
+	try {
+		if (typeof value === 'function') {
+			return value.name === name || (value as any).displayName === name
+		}
+		if (!isRecord(value)) return false
+		return (
+			value.displayName === name ||
+			(value.type ? matchesName(value.type, name) : false)
+		)
+	} catch {
+		return false
+	}
 }
 
-export function findGifPickerClasses(value: unknown): Record<string, any>[] {
-	const found: Record<string, any>[] = []
-	const visited = new WeakSet<object>()
-
-	function visit(current: unknown, depth: number): void {
-		if (depth > 4) return
-		if (isGifPickerClass(current)) {
-			found.push(current as Record<string, any>)
-			return
-		}
-		if (!isRecord(current)) return
-		if (visited.has(current)) return
-		visited.add(current)
-
-		for (const key of Object.keys(current)) {
-			if (key === '_owner' || key === '_store' || key === '_self') continue
-			try {
-				visit(current[key], depth + 1)
-			} catch {}
-		}
+export function findNamed(
+	value: unknown,
+	names: string[],
+	output: unknown[],
+	depth = 0,
+): void {
+	if (depth > 4) return
+	if (names.some(name => matchesName(value, name))) {
+		output.push(value)
+		return
 	}
-
-	visit(value, 0)
-	return found
+	if (!isRecord(value)) return
+	let keys: string[]
+	try {
+		keys = Object.keys(value)
+	} catch {
+		return
+	}
+	for (const key of keys) {
+		if (key === '_owner' || key === '_store' || key === '_self') continue
+		try {
+			findNamed(value[key], names, output, depth + 1)
+		} catch {}
+	}
 }
 
-export function forceFavorites(instance: any): void {
-	const state = instance?.state
-	if (isRecord(state) && 'resultType' in state && state.resultType == null) {
-		state.resultType = 'Favorites'
+const FAVORITES_LABEL = /(^|\W)favorites(\W|$)/i
+
+function hasFavoriteLabel(value: unknown, depth = 0): boolean {
+	if (depth > 4) return false
+	if (typeof value === 'string') return FAVORITES_LABEL.test(value)
+	if (typeof value === 'function') return false
+	if (Array.isArray(value)) {
+		return value.some(item => hasFavoriteLabel(item, depth + 1))
 	}
+	if (!isRecord(value)) return false
+	return Object.values(value).some(item => hasFavoriteLabel(item, depth + 1))
+}
+
+export function findFavoritePress(
+	value: unknown,
+	depth = 0,
+): (() => void) | undefined {
+	if (depth > 4) return undefined
+	if (Array.isArray(value)) {
+		for (const item of value) {
+			const found = findFavoritePress(item, depth + 1)
+			if (found) return found
+		}
+		return undefined
+	}
+	if (!isRecord(value)) return undefined
+
+	const props = value.props
+	if (isRecord(props)) {
+		const onPress = props.onPress
+		if (typeof onPress === 'function' && hasFavoriteLabel(props)) {
+			return () => {
+				onPress()
+			}
+		}
+		const found = findFavoritePress(props.children, depth + 1)
+		if (found) return found
+	}
+	return undefined
 }

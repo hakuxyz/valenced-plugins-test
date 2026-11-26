@@ -3,50 +3,64 @@ import {
 	createFilterGenerator,
 	FilterScopes,
 } from '@valenced/modules/finders/filters'
-import { instead } from '@valenced/patcher'
-import { findGifPickerClasses, forceFavorites } from './shared'
+import { afterJSX } from '@valenced/react/jsx-runtime'
+import { findFavoritePress, findNamed } from './shared'
 
-type LooseInstead = (
-	parent: Record<string, any>,
-	key: string,
-	hook: (this: any, args: any[], original: (...args: any[]) => any) => any,
-) => () => void
+const PICKER_NAMES = ['GIFPickerCategoryView', 'GIFPickerCategoriesPage']
 
-const insteadLoose = instead as unknown as LooseInstead
+// shortcut: a 1s gap marks a new picker opening, replace if a real open event is exposed.
+const SESSION_GAP_MS = 1000
 
-const gifPickerFilter = createFilterGenerator<[]>(
-	(_args, _id, exports) => findGifPickerClasses(exports).length > 0,
-	() => 'instantFavGif.picker',
-	FilterScopes.Initialized,
+const pickerFilter = createFilterGenerator<[]>(
+	(_args, _id, exports) => {
+		const found: unknown[] = []
+		findNamed(exports, PICKER_NAMES, found)
+		return found.length > 0
+	},
+	() => 'instantFavGif.mobilePicker',
+	FilterScopes.All,
 )
 
-const patched = new Set<Record<string, any>>()
+const hooked = new Set<unknown>()
+let lastCategoryViewAt = 0
+let openedFavorites = false
+
+function openFavoritesOnce(element: any): any {
+	const now = Date.now()
+	if (now - lastCategoryViewAt > SESSION_GAP_MS) openedFavorites = false
+	lastCategoryViewAt = now
+	if (openedFavorites) return element
+
+	const onPress = findFavoritePress(element)
+	if (!onPress) return element
+	openedFavorites = true
+	console.log('[instant-fav-gif] opening favorites')
+	setTimeout(() => {
+		try {
+			onPress()
+		} catch {}
+	}, 0)
+	return element
+}
 
 export default plugin({
 	start({ cleanup }) {
 		cleanup(
 			getModules(
-				gifPickerFilter(),
+				pickerFilter(),
 				(exports: unknown) => {
-					for (const component of findGifPickerClasses(exports)) {
-						if (patched.has(component)) continue
-						patched.add(component)
-
-						const proto = component.prototype
-						if (!proto || typeof proto.render !== 'function') continue
-
+					const found: unknown[] = []
+					findNamed(exports, PICKER_NAMES, found)
+					for (const component of found) {
+						if (hooked.has(component)) continue
+						hooked.add(component)
 						try {
-							cleanup(
-								insteadLoose(proto, 'render', function (args, original) {
-									// Discord picks the first category from this state during render.
-									forceFavorites(this)
-									return original.apply(this, args)
-								}),
-							)
+							cleanup(afterJSX(component as never, openFavoritesOnce))
+							console.log('[instant-fav-gif] hooked picker category')
 						} catch {}
 					}
 				},
-				{ returnNamespace: true, max: 5 },
+				{ returnNamespace: true },
 			),
 		)
 	},
