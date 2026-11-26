@@ -13,6 +13,7 @@ import {
 } from './shared'
 
 function toast(text: string): void {
+	console.log('[instant-fav-gif]', text)
 	try {
 		ToastActionCreators.open('HV_IFG', { text, duration: 3000 })
 	} catch {}
