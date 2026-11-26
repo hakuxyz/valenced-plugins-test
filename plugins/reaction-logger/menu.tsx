@@ -114,15 +114,18 @@ function injectChildren(
 	depth: number,
 ): ReactElement {
 	const props = tree.props as { children?: ReactNode } | undefined
-	const children = [props?.children]
-		.flat()
-		.filter(Boolean)
-		.map(child => inject(child as ReactElement, names, onError, depth))
-	return createElement(tree.type as FC<Record<string, unknown>>, {
-		...(tree.props as Record<string, unknown>),
-		children,
-		key: tree.key,
-	})
+	const children = [props?.children].flat().filter(Boolean)
+	if (!children.length) return tree
+	const next = children.map(child =>
+		inject(child as ReactElement, names, onError, depth),
+	)
+	const rest = { ...(tree.props as Record<string, unknown>) }
+	delete rest.children
+	return createElement(
+		tree.type as FC<Record<string, unknown>>,
+		{ ...rest, key: tree.key },
+		...next,
+	)
 }
 
 // The reaction sheet renders through connected components before the real sheet.
@@ -138,10 +141,16 @@ function inject(
 	const Inner = tree.type as FC<Record<string, unknown>>
 	if (typeof Inner === 'function') {
 		const Wrapped = (props: Record<string, unknown>) => {
-			const inner = Reflect.apply(Inner, undefined, [props]) as ReactElement
-			if (addIfFound(inner, names, onError)) return inner
-			console.log('[ReactionLogger] descend', typeName(Inner))
-			return injectChildren(inner, names, onError, depth + 1)
+			let inner: ReactElement | null = null
+			try {
+				inner = Reflect.apply(Inner, undefined, [props]) as ReactElement
+				if (addIfFound(inner, names, onError)) return inner
+				console.log('[ReactionLogger] descend', typeName(Inner))
+				return injectChildren(inner, names, onError, depth + 1)
+			} catch (error) {
+				onError(error)
+			}
+			return inner
 		}
 		return createElement(Wrapped, {
 			...(tree.props as Record<string, unknown>),
