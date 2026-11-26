@@ -96,7 +96,6 @@ export function patchReactionActionSheet(
 		}
 		if (!removers.length) return original(...args)
 
-		console.log('[ReactionLogger] removers', JSON.stringify(removers))
 		const sheet = Promise.resolve({
 			default: () => createElement(RemoverSheet, { removers }),
 		})
