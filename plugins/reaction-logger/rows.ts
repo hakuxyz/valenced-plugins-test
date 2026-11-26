@@ -6,7 +6,6 @@ import type { LoggedReaction, MessageRow, ReactionData } from './shared'
 /** Discord marks a regenerated row as changed before sending it to native. */
 const UpdateChangeType = 2
 const DeepRed = processColor('#8B0000')
-let loggedRow = false
 
 function styleDeleted(reaction: ReactionData): ReactionData {
 	const styled: ReactionData = {
@@ -59,19 +58,6 @@ export function styleRow(row: MessageRow): MessageRow {
 
 	const reactions: ReactionData[] = message.reactions ?? []
 	recordMessage(id, message.channelId, reactions)
-
-	if (!loggedRow) {
-		loggedRow = true
-		console.log(
-			'[ReactionLogger] row',
-			JSON.stringify({
-				row: Object.keys(row),
-				message: Object.keys(message),
-				accessories: (row.accessories ?? []).map(a => Object.keys(a ?? {})),
-				reaction: reactions[0] ? Object.keys(reactions[0]) : [],
-			}),
-		)
-	}
 
 	const deleted = getDeletedReactions(id)
 	if (!deleted.length) return row
