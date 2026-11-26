@@ -4,7 +4,7 @@ import {
 	withName,
 	withProps,
 } from '@valenced/modules/finders/filters'
-import { after, before } from '@valenced/patcher'
+import { after, instead } from '@valenced/patcher'
 import { getErrorStack } from '@valenced/utils/error'
 import { clearLogs, interceptReactions } from './logger'
 import { styleRow } from './rows'
@@ -61,18 +61,22 @@ function debugStores(cleanup: (...fns: Array<() => unknown>) => void): void {
 	cleanup(
 		getModules(withProps('handleViewReactions'), exports => {
 			cleanup(
-				before(
+				instead(
 					exports as Record<
 						'handleViewReactions',
 						(...a: unknown[]) => unknown
 					>,
 					'handleViewReactions',
-					args => {
+					(args, original) => {
 						console.log(
 							'[ReactionLogger] view args',
 							JSON.stringify(args.map(summarize)),
 						)
-						return args
+						console.log(
+							'[ReactionLogger] view source',
+							original.toString().slice(0, 1400),
+						)
+						return original(...args)
 					},
 				),
 			)
