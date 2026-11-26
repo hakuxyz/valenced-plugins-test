@@ -1,3 +1,4 @@
+import { onFluxEventDispatched } from '@valenced/discord/flux'
 import { getModules } from '@valenced/modules/finders'
 import {
 	createFilterGenerator,
@@ -18,15 +19,13 @@ const pickerFilter = createFilterGenerator<[]>(
 
 const hooked = new Set<unknown>()
 let selected = false
+let selectedAt = 0
 
 function selectFavoritesOnce(element: any): any {
 	const select = findFavoriteCategorySelect(element)
-	if (!select) {
-		selected = false
-		return element
-	}
-	if (selected) return element
+	if (!select || selected) return element
 	selected = true
+	selectedAt = Date.now()
 	console.log('[instant-fav-gif] selected favorites')
 	setTimeout(() => {
 		try {
@@ -38,6 +37,11 @@ function selectFavoritesOnce(element: any): any {
 
 export default plugin({
 	start({ cleanup }) {
+		cleanup(
+			onFluxEventDispatched('EXPRESSION_PICKER_OPEN', () => {
+				if (Date.now() - selectedAt > 200) selected = false
+			}),
+		)
 		cleanup(
 			getModules(
 				pickerFilter(),
