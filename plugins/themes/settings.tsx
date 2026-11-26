@@ -2,7 +2,6 @@ import Page from '@valenced/components/Page'
 import { AlertActionCreators } from '@valenced/discord/actions'
 import { Design } from '@valenced/discord/design'
 import { BundleUpdaterManager, FileModule } from '@valenced/discord/native'
-import { rm } from '@valenced/modules/native/fs'
 import { pluginStorageDirFor } from '@valenced/plugins/constants'
 import { lookupGeneratedIconComponent } from '@valenced/utils/discord'
 import { unzipSync } from 'fflate'
@@ -32,17 +31,13 @@ const {
 	Text,
 } = Design
 
-const UseIcon = lookupGeneratedIconComponent('CheckmarkIcon', 'CircleCheckIcon')
-const DownloadIcon = lookupGeneratedIconComponent(
-	'DownloadIcon',
-	'ArrowDownToLineIcon',
-)
-const ReloadIcon = lookupGeneratedIconComponent(
-	'RetryIcon',
-	'RefreshIcon',
-	'SyncIcon',
-)
-const UninstallIcon = lookupGeneratedIconComponent('TrashIcon', 'DeleteIcon')
+function lookupIcon(...names: [string, ...string[]]) {
+	try {
+		return lookupGeneratedIconComponent(...names)
+	} catch {
+		return undefined
+	}
+}
 
 function formatSize(bytes: number): string {
 	if (!bytes) return '...'
@@ -195,6 +190,11 @@ export default function SettingsComponent({ api }: Props) {
 	const selected = settings.selected
 	const downloaded = new Set(settings.downloaded ?? [])
 
+	const UseIcon = lookupIcon('CheckmarkIcon', 'CircleCheckIcon')
+	const DownloadIcon = lookupIcon('DownloadIcon', 'ArrowDownToLineIcon')
+	const ReloadIcon = lookupIcon('RetryIcon', 'RefreshIcon', 'SyncIcon')
+	const UninstallIcon = lookupIcon('TrashIcon', 'DeleteIcon')
+
 	useEffect(() => {
 		let cancelled = false
 		fetch(PacksMetaUrl)
@@ -295,7 +295,8 @@ export default function SettingsComponent({ api }: Props) {
 
 	async function uninstallPack(pack: Pack) {
 		try {
-			await rm(packDirOf(pack.id))
+			const base = packDirOf(pack.id).slice(documentsDir.length + 1)
+			await FileModule.clearFolder('documents', base)
 			const nextDownloaded = (settings.downloaded ?? []).filter(
 				id => id !== pack.id,
 			)

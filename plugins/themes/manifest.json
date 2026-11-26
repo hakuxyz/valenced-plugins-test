@@ -4,7 +4,7 @@
 	"name": "Themes",
 	"description": "Selectable emoji packs for every supported Unicode emoji.",
 	"author": "hakuxyz (https://github.com/hakuxyz \"GitHub\")",
-	"version": "1.0.3",
+	"version": "1.0.4",
 	"icon": "PaintPaletteIcon",
 	"dependencies": {
 		"valenced.api": {
