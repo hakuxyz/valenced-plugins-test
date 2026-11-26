@@ -22,15 +22,21 @@ interface UserStore {
 	) => { username?: string; globalName?: string } | undefined
 }
 
-function RemoverSheet({ names }: { names: string[] }) {
+interface Remover {
+	name: string
+	time: string
+}
+
+function RemoverSheet({ removers }: { removers: Remover[] }) {
 	return createElement(
 		ActionSheet,
 		null,
 		createElement(ActionSheetRow.Group, {
-			children: names.map(name =>
+			children: removers.map(({ name, time }) =>
 				createElement(ActionSheetRow, {
-					key: name,
+					key: `${name}:${time}`,
 					label: `Removed by ${name}`,
+					subLabel: time,
 					variant: 'danger',
 					onPress: () => ActionSheetActionCreators.hideActionSheet(),
 				}),
@@ -65,28 +71,34 @@ export function patchReactionActionSheet(
 		)
 			return original(...args)
 
-		let names: string[]
+		let removers: Remover[]
 		try {
-			names = getRemovers(
+			removers = getRemovers(
 				props.messageId,
 				props.emoji,
 				props.isSelectedBurst ? 1 : 0,
 			)
-				.map(entry => entry.userId)
-				.filter((id): id is string => !!id)
-				.map(id => {
+				.filter(entry => !!entry.userId)
+				.map(entry => {
+					const id = entry.userId as string
 					const user = store?.getUser?.(id)
-					return user?.globalName ?? user?.username ?? id
+					return {
+						name: user?.globalName ?? user?.username ?? id,
+						time: new Date(entry.deletedAt).toLocaleTimeString([], {
+							hour: '2-digit',
+							minute: '2-digit',
+						}),
+					}
 				})
 		} catch (error) {
 			onError(error)
 			return original(...args)
 		}
-		if (!names.length) return original(...args)
+		if (!removers.length) return original(...args)
 
-		console.log('[ReactionLogger] removers', JSON.stringify(names))
+		console.log('[ReactionLogger] removers', JSON.stringify(removers))
 		const sheet = Promise.resolve({
-			default: () => createElement(RemoverSheet, { names }),
+			default: () => createElement(RemoverSheet, { removers }),
 		})
 		return original(sheet, key, props)
 	})
