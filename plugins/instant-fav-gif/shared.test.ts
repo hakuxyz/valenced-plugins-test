@@ -1,4 +1,8 @@
-import { findFavoritePress, findGifPickerComponents } from './shared'
+import {
+	describeElement,
+	findFavoritePress,
+	findGifPickerComponents,
+} from './shared'
 
 function check(name: string, actual: unknown, expected: unknown): void {
 	if (actual !== expected)
@@ -60,4 +64,10 @@ check(
 		},
 	}),
 	undefined,
+)
+
+check(
+	'describes the element for diagnostics',
+	describeElement(favoriteTile).includes('Category, Favorites'),
+	true,
 )

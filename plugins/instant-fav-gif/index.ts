@@ -5,7 +5,12 @@ import {
 	FilterScopes,
 } from '@valenced/modules/finders/filters'
 import { afterJSX } from '@valenced/react/jsx-runtime'
-import { findFavoritePress, findGifPickerComponents } from './shared'
+import {
+	componentName,
+	describeElement,
+	findFavoritePress,
+	findGifPickerComponents,
+} from './shared'
 
 function toast(text: string): void {
 	try {
@@ -27,26 +32,35 @@ const pickerFilter = createFilterGenerator<[]>(
 )
 
 const hooked = new Set<unknown>()
+const dumped = new Set<string>()
 let reported = false
 let lastCategoryViewAt = 0
 let openedFavorites = false
 
-function openFavoritesOnce(element: any): any {
-	const now = Date.now()
-	if (now - lastCategoryViewAt > SESSION_GAP_MS) openedFavorites = false
-	lastCategoryViewAt = now
-	if (openedFavorites) return element
+function makeOpenFavoritesOnce(name: string): (element: any) => any {
+	return (element: any): any => {
+		const now = Date.now()
+		if (now - lastCategoryViewAt > SESSION_GAP_MS) openedFavorites = false
+		lastCategoryViewAt = now
+		if (openedFavorites) return element
 
-	const onPress = findFavoritePress(element)
-	if (!onPress) return element
-	openedFavorites = true
-	toast('IFG favorites')
-	setTimeout(() => {
-		try {
-			onPress()
-		} catch {}
-	}, 0)
-	return element
+		const onPress = findFavoritePress(element)
+		if (!onPress) {
+			if (!dumped.has(name)) {
+				dumped.add(name)
+				toast(`IFG dump ${name}: ${describeElement(element)}`)
+			}
+			return element
+		}
+		openedFavorites = true
+		toast('IFG favorites')
+		setTimeout(() => {
+			try {
+				onPress()
+			} catch {}
+		}, 0)
+		return element
+	}
 }
 
 export default plugin({
@@ -63,12 +77,17 @@ export default plugin({
 						hooked.add(component)
 						added++
 						try {
-							cleanup(afterJSX(component as never, openFavoritesOnce))
+							cleanup(
+								afterJSX(
+									component as never,
+									makeOpenFavoritesOnce(componentName(component)),
+								),
+							)
 						} catch {}
 					}
 					if (added > 0 && !reported) {
 						reported = true
-						toast(`IFG hooked ${hooked.size}`)
+						toast(`IFG hooked ${componentName(found[0])}`)
 					}
 				},
 				{ returnNamespace: true },
