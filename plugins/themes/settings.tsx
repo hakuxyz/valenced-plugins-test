@@ -2,7 +2,9 @@ import Page from '@valenced/components/Page'
 import { AlertActionCreators } from '@valenced/discord/actions'
 import { Design } from '@valenced/discord/design'
 import { BundleUpdaterManager, FileModule } from '@valenced/discord/native'
+import { rm } from '@valenced/modules/native/fs'
 import { pluginStorageDirFor } from '@valenced/plugins/constants'
+import { lookupGeneratedIconComponent } from '@valenced/utils/discord'
 import { unzipSync } from 'fflate'
 import { useEffect, useState } from 'react'
 import { Image, ScrollView } from 'react-native'
@@ -17,16 +19,30 @@ type Props = ComponentProps<PluginSettingsComponent<{ jsonStorage: Settings }>>
 const PacksBaseUrl = 'https://hakuxyz.github.io/valenced-plugins-test/packs'
 const PacksMetaUrl = `${PacksBaseUrl}/meta.json`
 const ReloadAlertKey = 'ThemesReloadRequired'
+const UninstallAlertKey = 'ThemesUninstallConfirm'
 
 const {
 	AlertActionButton,
 	AlertModal,
 	Button,
+	ContextMenu,
 	Stack,
 	TableRow,
 	TableRowGroup,
 	Text,
 } = Design
+
+const UseIcon = lookupGeneratedIconComponent('CheckmarkIcon', 'CircleCheckIcon')
+const DownloadIcon = lookupGeneratedIconComponent(
+	'DownloadIcon',
+	'ArrowDownToLineIcon',
+)
+const ReloadIcon = lookupGeneratedIconComponent(
+	'RetryIcon',
+	'RefreshIcon',
+	'SyncIcon',
+)
+const UninstallIcon = lookupGeneratedIconComponent('TrashIcon', 'DeleteIcon')
 
 function formatSize(bytes: number): string {
 	if (!bytes) return '...'
@@ -119,6 +135,39 @@ function openReloadRequired() {
 						variant="secondary"
 						text="Not now"
 						onPress={() => AlertActionCreators.dismissAlert(ReloadAlertKey)}
+					/>
+				</>
+			}
+		/>,
+	)
+}
+
+function openUninstallConfirm(pack: Pack, onConfirm: () => void) {
+	AlertActionCreators.openAlert(
+		UninstallAlertKey,
+		<AlertModal
+			title={`Uninstall ${pack.name}?`}
+			content={
+				<Text variant="text-md/medium" color="text-default">
+					This deletes the downloaded emoji files from your phone.
+				</Text>
+			}
+			actions={
+				<>
+					<AlertActionButton
+						variant="destructive"
+						text="Uninstall"
+						onPress={() => {
+							AlertActionCreators.dismissAlert(UninstallAlertKey)
+							onConfirm()
+						}}
+					/>
+					<AlertActionButton
+						variant="secondary"
+						text="Cancel"
+						onPress={() =>
+							AlertActionCreators.dismissAlert(UninstallAlertKey)
+						}
 					/>
 				</>
 			}

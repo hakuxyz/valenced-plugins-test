@@ -13,7 +13,7 @@ export interface EmojiSelection {
 declare module '@valenced/modules/native' {
 	interface NativeMethods {
 		'valenced.themes.getState': [[], string]
-		'valenced.themes.setEmoji': [[json: string], null]
+		'valenced.themes.setEmoji': [[json: string | null], null]
 	}
 }
 
@@ -25,9 +25,9 @@ export function readEmojiSelection(): EmojiSelection | undefined {
 	return state.emoji
 }
 
-/** Persists the selection native applies before JavaScript starts. */
-export function writeEmojiSelection(selection: EmojiSelection) {
+/** Persists the selection native applies before JavaScript starts. Pass null to reset. */
+export function writeEmojiSelection(selection: EmojiSelection | null) {
 	return callNativeMethod('valenced.themes.setEmoji', [
-		JSON.stringify(selection),
+		selection && JSON.stringify(selection),
 	])
 }
