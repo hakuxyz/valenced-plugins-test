@@ -1,12 +1,17 @@
+import { ToastActionCreators } from '@valenced/discord/actions'
 import { getModules } from '@valenced/modules/finders'
 import {
 	createFilterGenerator,
 	FilterScopes,
 } from '@valenced/modules/finders/filters'
 import { afterJSX } from '@valenced/react/jsx-runtime'
-import { findFavoritePress, findNamed } from './shared'
+import { findFavoritePress, findGifPickerComponents } from './shared'
 
-const PICKER_NAMES = ['GIFPickerCategoryView', 'GIFPickerCategoriesPage']
+function toast(text: string): void {
+	try {
+		ToastActionCreators.open('HV_IFG', { text, duration: 3000 })
+	} catch {}
+}
 
 // shortcut: a 1s gap marks a new picker opening, replace if a real open event is exposed.
 const SESSION_GAP_MS = 1000
@@ -14,7 +19,7 @@ const SESSION_GAP_MS = 1000
 const pickerFilter = createFilterGenerator<[]>(
 	(_args, _id, exports) => {
 		const found: unknown[] = []
-		findNamed(exports, PICKER_NAMES, found)
+		findGifPickerComponents(exports, found)
 		return found.length > 0
 	},
 	() => 'instantFavGif.mobilePicker',
@@ -22,6 +27,7 @@ const pickerFilter = createFilterGenerator<[]>(
 )
 
 const hooked = new Set<unknown>()
+let reported = false
 let lastCategoryViewAt = 0
 let openedFavorites = false
 
@@ -34,7 +40,7 @@ function openFavoritesOnce(element: any): any {
 	const onPress = findFavoritePress(element)
 	if (!onPress) return element
 	openedFavorites = true
-	console.log('[instant-fav-gif] opening favorites')
+	toast('IFG favorites')
 	setTimeout(() => {
 		try {
 			onPress()
@@ -50,14 +56,19 @@ export default plugin({
 				pickerFilter(),
 				(exports: unknown) => {
 					const found: unknown[] = []
-					findNamed(exports, PICKER_NAMES, found)
+					findGifPickerComponents(exports, found)
+					let added = 0
 					for (const component of found) {
 						if (hooked.has(component)) continue
 						hooked.add(component)
+						added++
 						try {
 							cleanup(afterJSX(component as never, openFavoritesOnce))
-							console.log('[instant-fav-gif] hooked picker category')
 						} catch {}
+					}
+					if (added > 0 && !reported) {
+						reported = true
+						toast(`IFG hooked ${hooked.size}`)
 					}
 				},
 				{ returnNamespace: true },
