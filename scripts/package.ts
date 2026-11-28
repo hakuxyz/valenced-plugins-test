@@ -20,31 +20,48 @@ mkdirSync(PacksDir, { recursive: true })
 
 let count = 0
 
-for (const name of [...readdirSync('plugins')].sort()) {
-	const pluginDir = join('plugins', name)
-	const manifestPath = join(pluginDir, 'manifest.json')
-	if (!existsSync(manifestPath)) continue
-
-	const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as {
-		id: string
-		version: string
+function addAssets(
+	dir: string,
+	archive: Record<string, Uint8Array>,
+	prefix = '',
+) {
+	for (const entry of readdirSync(dir, { withFileTypes: true })) {
+		const path = join(dir, entry.name)
+		if (entry.isDirectory()) addAssets(path, archive, `${prefix}${entry.name}/`)
+		else archive[`${prefix}${entry.name}`] = new Uint8Array(readFileSync(path))
 	}
-	const bundlePath = join(pluginDir, 'build', 'js', 'index.js')
-	if (!existsSync(bundlePath)) {
-		throw new Error(`Missing ${bundlePath}. Run "bun run build" first.`)
+}
+
+for (const root of ['plugins', 'themes']) {
+	for (const name of [...readdirSync(root)].sort()) {
+		const pluginDir = join(root, name)
+		const manifestPath = join(pluginDir, 'manifest.json')
+		if (!existsSync(manifestPath)) continue
+
+		const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as {
+			id: string
+			version: string
+		}
+		const bundlePath = join(pluginDir, 'build', 'js', 'index.js')
+		if (!existsSync(bundlePath)) {
+			throw new Error(`Missing ${bundlePath}. Run "bun run build" first.`)
+		}
+
+		const archive: Record<string, Uint8Array> = {
+			'manifest.json': new Uint8Array(readFileSync(manifestPath)),
+			'index.js': new Uint8Array(readFileSync(bundlePath)),
+		}
+		const assetsDir = join(pluginDir, 'assets')
+		if (root === 'themes' && existsSync(assetsDir))
+			addAssets(assetsDir, archive, 'assets/')
+
+		const zipped = zipSync(archive, { mtime: FixedMtime })
+		const fileName = `${manifest.id}@${manifest.version}.zip`
+
+		writeFileSync(join(PagesDir, fileName), zipped)
+		count++
+		console.log(`Packed ${fileName}`)
 	}
-
-	const archive: Record<string, Uint8Array> = {
-		'manifest.json': new Uint8Array(readFileSync(manifestPath)),
-		'index.js': new Uint8Array(readFileSync(bundlePath)),
-	}
-
-	const zipped = zipSync(archive, { mtime: FixedMtime })
-	const fileName = `${manifest.id}@${manifest.version}.zip`
-
-	writeFileSync(join(PagesDir, fileName), zipped)
-	count++
-	console.log(`Packed ${fileName}`)
 }
 
 // Emoji packs are downloaded on demand from plugin settings, not bundled in

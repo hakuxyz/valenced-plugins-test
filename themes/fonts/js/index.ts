@@ -1,30 +1,54 @@
-/// <reference types="@valenced/themes-api" />
+interface FontVariant {
+	path: string
+	weight?: number
+	italic?: boolean
+	axes?: Record<string, number>
+}
 
-import type { FontVariant } from '@valenced/themes-api/types'
+interface ThemesApi {
+	registerGroup(id: string, group: { name: string; description?: string }): void
+	registerFontPack(
+		groupId: string,
+		packId: string,
+		pack: {
+			name: string
+			description?: string
+			families: Record<string, FontVariant[]>
+		},
+	): void
+}
 
 const Font = 'assets/fonts/md.ttf'
 
-const Styles = ['Normal', 'Medium', 'Semibold', 'Bold', 'ExtraBold'] as const
-
-const families: Record<string, FontVariant[]> = {}
-for (const style of Styles) {
-        families[`ggsans-${style}`] = [
-                { path: Font },
-                { path: Font, italic: true },
-        ]
+/** Discord asks for these family names. The style is part of the name. */
+const Weights: Record<string, number> = {
+	Normal: 400,
+	Medium: 500,
+	Semibold: 600,
+	Bold: 700,
+	ExtraBold: 800,
 }
 
-export default plugin({
-        preInit({ themes }) {
-                themes.registerGroup('custom', {
-                        name: 'Custom',
-                        description: 'Custom font packs',
-                })
+const families: Record<string, FontVariant[]> = {}
+for (const [style, weight] of Object.entries(Weights))
+	families[`ggsans-${style}`] = [
+		{ path: Font, weight },
+		{ path: Font, weight, italic: true },
+	]
 
-                themes.registerFontPack('custom', 'my-diary', {
-                        name: 'My diary',
-                        description: 'Replaces gg sans with My diary',
-                        families,
-                })
-        },
+export default plugin({
+	preInit(api) {
+		const themes = (api as { themes?: ThemesApi }).themes
+		if (!themes) return
+
+		themes.registerGroup('custom', {
+			name: 'Custom',
+			description: 'Custom font packs',
+		})
+		themes.registerFontPack('custom', 'my-diary', {
+			name: 'My diary',
+			description: 'Replaces gg sans with My diary',
+			families,
+		})
+	},
 })

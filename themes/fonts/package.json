@@ -1,6 +1,3 @@
 {
-        "name": "@valenced/my-diary",
-        "devDependencies": {
-                "@valenced/themes-api": "workspace:*"
-        }
+	"name": "@hakuxyz/valenced-my-diary-font"
 }
