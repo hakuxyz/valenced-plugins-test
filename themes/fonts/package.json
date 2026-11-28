@@ -1,0 +1,6 @@
+{
+        "name": "@valenced/my-diary",
+        "devDependencies": {
+                "@valenced/themes-api": "workspace:*"
+        }
+}
